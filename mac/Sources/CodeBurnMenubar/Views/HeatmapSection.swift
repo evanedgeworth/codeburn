@@ -87,7 +87,7 @@ struct HeatmapSection: View {
             }
         case .trend: TrendInsight(days: store.payload.history.daily, period: store.trendPeriod)
         case .calendar: ContributionHeatmapInsight(days: store.payload.history.daily)
-        case .forecast: ForecastInsight(days: store.payload.history.daily)
+        case .forecast: ForecastInsight(days: store.payload.history.daily, billingDays: store.billingHistory)
         case .pulse: PulseInsight(payload: store.payload)
         case .stats: StatsInsight(payload: store.payload)
         case .optimize: OptimizeInsight(payload: store.payload)
@@ -888,42 +888,44 @@ private func formatTokensForContribution(_ n: Int) -> String {
 
 private struct ForecastInsight: View {
     let days: [DailyHistoryEntry]
+    let billingDays: [BillingDailyEntry]
 
     var body: some View {
-        let stats = computeForecast(days: days)
+        let gross = computeForecast(days: days)
+        let billable = computeBillingForecast(days: billingDays)
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Month-to-date")
+                    Text("API-equivalent MTD")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.tertiary)
-                    Text(stats.mtd.asCurrency())
+                    Text(gross.mtd.asCurrency())
                         .font(.system(size: 22, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(Theme.brandAccent)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("On pace for")
+                    Text("Estimated billable MTD")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.tertiary)
-                    Text(stats.projection.asCurrency())
+                    Text(billable.mtd.asCurrency())
                         .font(.system(size: 16, weight: .semibold))
                         .monospacedDigit()
                 }
             }
 
             HStack(spacing: 14) {
-                ForecastStat(label: "Avg/day (this wk)", value: stats.weekAvg.asCompactCurrency())
-                ForecastStat(label: "Yesterday", value: stats.yesterday.asCompactCurrency())
-                ForecastStat(label: "Last 7d", value: stats.weekTotal.asCompactCurrency())
+                ForecastStat(label: "API-equivalent pace", value: gross.projection.asCompactCurrency())
+                ForecastStat(label: "Billable pace", value: billable.projection.asCompactCurrency())
+                ForecastStat(label: "Billable last 7d", value: billable.weekTotal.asCompactCurrency())
             }
 
-            if let prevTotal = stats.previousMonthTotal {
+            if let prevTotal = billable.previousMonthTotal {
                 HStack(spacing: 4) {
-                    Image(systemName: stats.projection > prevTotal ? "arrow.up.right" : "arrow.down.right")
+                    Image(systemName: billable.projection > prevTotal ? "arrow.up.right" : "arrow.down.right")
                         .font(.system(size: 9, weight: .bold))
-                    Text(comparisonText(projection: stats.projection, previous: prevTotal))
+                    Text("Billable " + comparisonText(projection: billable.projection, previous: prevTotal))
                         .font(.system(size: 10.5))
                         .monospacedDigit()
                 }
@@ -938,6 +940,50 @@ private struct ForecastInsight: View {
         let sign = diff >= 0 ? "+" : ""
         return "\(sign)\(String(format: "%.0f", diff))% vs last month (\(previous.asCompactCurrency()))"
     }
+}
+
+private func computeBillingForecast(days: [BillingDailyEntry]) -> ForecastStats {
+    let calendar = gregorianCalendar
+    let formatter = yyyymmdd
+    let now = Date()
+    let comps = calendar.dateComponents([.year, .month, .day], from: now)
+    guard
+        let firstOfMonth = calendar.date(from: DateComponents(year: comps.year, month: comps.month, day: 1)),
+        let rangeOfMonth = calendar.range(of: .day, in: .month, for: firstOfMonth)
+    else {
+        return ForecastStats(mtd: 0, projection: 0, weekAvg: 0, weekTotal: 0, yesterday: 0, previousMonthTotal: nil)
+    }
+
+    let firstStr = formatter.string(from: firstOfMonth)
+    let mtd = days.filter { $0.date >= firstStr }.reduce(0.0) { $0 + $1.estimatedBillableUSD }
+    let projection = mtd / Double(max(comps.day ?? 1, 1)) * Double(rangeOfMonth.count)
+    let weekStart = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: now))
+    let weekStartStr = weekStart.map { formatter.string(from: $0) } ?? ""
+    let weekTotal = days.filter { $0.date >= weekStartStr }.reduce(0.0) { $0 + $1.estimatedBillableUSD }
+    let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now))
+    let yesterdayStr = yesterdayDate.map { formatter.string(from: $0) } ?? ""
+    let yesterday = days.first(where: { $0.date == yesterdayStr })?.estimatedBillableUSD ?? 0
+
+    var previousMonthTotal: Double?
+    if let previousMonth = calendar.date(byAdding: .month, value: -1, to: firstOfMonth),
+       let previousMonthAfter = calendar.date(byAdding: .month, value: 1, to: previousMonth)
+    {
+        let start = formatter.string(from: previousMonth)
+        let end = formatter.string(from: calendar.date(byAdding: .day, value: -1, to: previousMonthAfter) ?? previousMonth)
+        let entries = days.filter { $0.date >= start && $0.date <= end }
+        if !entries.isEmpty {
+            previousMonthTotal = entries.reduce(0.0) { $0 + $1.estimatedBillableUSD }
+        }
+    }
+
+    return ForecastStats(
+        mtd: mtd,
+        projection: projection,
+        weekAvg: weekTotal / 7,
+        weekTotal: weekTotal,
+        yesterday: yesterday,
+        previousMonthTotal: previousMonthTotal
+    )
 }
 
 private struct ForecastStat: View {

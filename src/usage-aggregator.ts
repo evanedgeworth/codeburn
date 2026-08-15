@@ -191,6 +191,11 @@ function dailyEntriesToHistory(days: ReturnType<typeof aggregateProjectsIntoDays
       cacheReadTokens: d.cacheReadTokens,
       cacheWriteTokens: d.cacheWriteTokens,
       topModels,
+      providers: Object.fromEntries(
+        Object.entries(d.providers)
+          .filter(([, provider]) => provider.cost >= 0)
+          .map(([name, provider]) => [name, provider.cost]),
+      ),
     }
   })
 }

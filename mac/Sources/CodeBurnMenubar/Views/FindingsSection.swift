@@ -8,7 +8,12 @@ struct FindingsSection: View {
     @State private var isExpanded: Bool = true
 
     var body: some View {
-        let groups = computeTipGroups(payload: store.payload)
+        let billing = store.billingCost(for: store.payload.current)
+        let groups = computeTipGroups(
+            payload: store.payload,
+            billing: billing,
+            billingHistory: store.billingHistory
+        )
         if groups.allSatisfy({ $0.items.isEmpty }) { return AnyView(EmptyView()) }
 
         return AnyView(
@@ -130,8 +135,12 @@ private struct TipItem: Identifiable {
     let trailing: String?
 }
 
-@MainActor private func computeTipGroups(payload: MenubarPayload) -> [TipGroup] {
-    let stats = computeHistoryStats(history: payload.history.daily)
+@MainActor private func computeTipGroups(
+    payload: MenubarPayload,
+    billing: BillingCostBreakdown,
+    billingHistory: [BillingDailyEntry]
+) -> [TipGroup] {
+    let stats = computeHistoryStats(history: billingHistory)
 
     // What's working
     var wins: [TipItem] = []
@@ -150,13 +159,19 @@ private struct TipItem: Identifiable {
     }
     if let delta = stats.weekDeltaPercent, delta < -10 {
         wins.append(TipItem(
-            text: "Spend down \(Int(abs(delta)))% vs last 7 days",
+            text: "Estimated billable cost down \(Int(abs(delta)))% vs last 7 days",
             trailing: nil
         ))
     }
     if stats.activeStreakDays >= 5 {
         wins.append(TipItem(
             text: "\(stats.activeStreakDays)-day usage streak",
+            trailing: nil
+        ))
+    }
+    if billing.subscriptionCoveredUSD > 0 {
+        wins.append(TipItem(
+            text: "\(billing.subscriptionCoveredUSD.asCompactCurrency()) API-equivalent usage marked subscription-covered",
             trailing: nil
         ))
     }
@@ -174,13 +189,13 @@ private struct TipItem: Identifiable {
     var risks: [TipItem] = []
     if let delta = stats.weekDeltaPercent, delta > 25 {
         risks.append(TipItem(
-            text: "Spend up \(Int(delta))% vs prior 7 days",
+            text: "Estimated billable cost up \(Int(delta))% vs prior 7 days",
             trailing: nil
         ))
     }
     if cacheHit > 0 && cacheHit < 50 {
         risks.append(TipItem(
-            text: "Cache hit only \(Int(cacheHit))% — paying for cold prompts",
+            text: "Cache hit only \(Int(cacheHit))% — cold prompts use more quota",
             trailing: nil
         ))
     }
@@ -190,9 +205,11 @@ private struct TipItem: Identifiable {
             trailing: nil
         ))
     }
-    if let projected = stats.projectedMonth, let prevMonth = stats.previousMonthTotal, projected > prevMonth * 1.3 {
+    if let projected = stats.projectedMonth,
+       let prevMonth = stats.previousMonthTotal,
+        projected > prevMonth * 1.3 {
         risks.append(TipItem(
-            text: "On pace for \(projected.asCompactCurrency()) this month (+\(Int(((projected - prevMonth) / prevMonth) * 100))% vs last)",
+            text: "Billable cost on pace for \(projected.asCompactCurrency()) this month (+\(Int(((projected - prevMonth) / prevMonth) * 100))% vs last)",
             trailing: nil
         ))
     }
@@ -211,7 +228,7 @@ private struct HistoryStats {
     let previousMonthTotal: Double?
 }
 
-private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
+private func computeHistoryStats(history: [BillingDailyEntry]) -> HistoryStats {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = .current
     let formatter: DateFormatter = {
@@ -222,7 +239,7 @@ private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
     }()
     let now = Date()
     let today = calendar.startOfDay(for: now)
-    let costByDate = Dictionary(history.map { ($0.date, $0.cost) }, uniquingKeysWith: +)
+    let costByDate = Dictionary(history.map { ($0.date, $0.apiEquivalentUSD) }, uniquingKeysWith: +)
 
     let lastWeekStart = calendar.date(byAdding: .day, value: -6, to: today)
     let priorWeekStart = calendar.date(byAdding: .day, value: -13, to: today)
@@ -232,8 +249,8 @@ private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
         let lwsStr = formatter.string(from: lws)
         let pwsStr = formatter.string(from: pws)
         let pweStr = formatter.string(from: pwe)
-        let thisWeek = history.filter { $0.date >= lwsStr }.reduce(0.0) { $0 + $1.cost }
-        let prior = history.filter { $0.date >= pwsStr && $0.date <= pweStr }.reduce(0.0) { $0 + $1.cost }
+        let thisWeek = history.filter { $0.date >= lwsStr }.reduce(0.0) { $0 + $1.estimatedBillableUSD }
+        let prior = history.filter { $0.date >= pwsStr && $0.date <= pweStr }.reduce(0.0) { $0 + $1.estimatedBillableUSD }
         if prior > 0 {
             weekDeltaPercent = ((thisWeek - prior) / prior) * 100
         }
@@ -254,7 +271,7 @@ private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
         let rangeOfMonth = calendar.range(of: .day, in: .month, for: firstOfMonth)
     {
         let firstStr = formatter.string(from: firstOfMonth)
-        let mtd = history.filter { $0.date >= firstStr }.reduce(0.0) { $0 + $1.cost }
+        let mtd = history.filter { $0.date >= firstStr }.reduce(0.0) { $0 + $1.estimatedBillableUSD }
         let dayOfMonth = comps.day ?? 1
         if dayOfMonth > 0 {
             projectedMonth = (mtd / Double(dayOfMonth)) * Double(rangeOfMonth.count)
@@ -273,7 +290,7 @@ private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
             let prevFirstStr = formatter.string(from: prevFirst)
             let prevLastStr = formatter.string(from: prevLast)
             let prevTotal = history.filter { $0.date >= prevFirstStr && $0.date <= prevLastStr }
-                .reduce(0.0) { $0 + $1.cost }
+                .reduce(0.0) { $0 + $1.estimatedBillableUSD }
             if prevTotal > 0 { previousMonthTotal = prevTotal }
         }
     }

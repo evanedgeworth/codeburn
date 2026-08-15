@@ -131,6 +131,18 @@ private final class ProcessQueue: @unchecked Sendable {
 
 @Suite("ServeConnection", .serialized)
 struct ServeConnectionTests {
+    @Test("finds only detached CodeBurn servers")
+    func findsOnlyDetachedCodeBurnServers() {
+        let processList = """
+          101     1 node /opt/homebrew/bin/codeburn serve --stdio
+          102 22649 node /opt/homebrew/bin/codeburn serve --stdio
+          103     1 node /opt/homebrew/bin/codeburn status --format json
+          104     1 /tmp/not-codeburn serve --stdio
+        """
+
+        #expect(OrphanedServeCleanup.pids(from: processList) == [101])
+    }
+
     @Test("the resident child starts at user-initiated QoS")
     func residentChildUsesInteractiveQoS() async {
         let recorder = QualityOfServiceRecorder()

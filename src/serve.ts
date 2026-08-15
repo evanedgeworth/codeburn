@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from 'fs'
 import { readFile, stat } from 'fs/promises'
 import { createHash } from 'crypto'
 import { createInterface } from 'readline'
+import { Worker } from 'worker_threads'
 
 import type { Command } from 'commander'
 import { getConfigFilePath } from './config.js'
@@ -35,6 +36,7 @@ import type { ParseReuseValidation } from './parser.js'
 // re-parses on the next request. 3GB leaves generous room for the largest
 // observed corpora while bounding a pathological one.
 const SERVE_MAX_RSS_BYTES = 3 * 1024 * 1024 * 1024
+const PARENT_WATCH_INTERVAL_MS = 2_000
 
 type OutputMemoEntry = {
   createdAt: number
@@ -104,6 +106,57 @@ const SERVE_OPTIONS: Readonly<Record<string, Readonly<Record<string, ServeOption
 }
 
 type ServeRequest = { id: string | number; args: string[] }
+
+/** True once the process that launched this resident server is no longer its parent. */
+export function parentProcessChanged(expectedParentPid: number, currentParentPid: number): boolean {
+  return expectedParentPid > 1 && currentParentPid !== expectedParentPid
+}
+
+type ProcessProbe = (pid: number) => void
+
+/** Covers runtimes that cache process.ppid by probing the original parent PID. */
+export function parentProcessIsGone(
+  expectedParentPid: number,
+  currentParentPid: number,
+  probe: ProcessProbe = pid => process.kill(pid, 0),
+): boolean {
+  if (expectedParentPid <= 1) return false
+  if (parentProcessChanged(expectedParentPid, currentParentPid)) return true
+  try {
+    probe(expectedParentPid)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ESRCH'
+  }
+}
+
+function startParentDeathWatchdog(): Worker | null {
+  const expectedParentPid = process.ppid
+  // A stdio server has no valid detached mode. This also closes the race where
+  // the app dies after spawning us but before this module initializes.
+  if (expectedParentPid <= 1) process.exit(0)
+  // Warm-up parsing is synchronous and can block the main event loop for long
+  // stretches. A worker thread keeps the parent probe responsive even then.
+  const worker = new Worker(`
+    const { workerData } = require('node:worker_threads')
+    setInterval(() => {
+      try {
+        process.kill(workerData.parentPid, 0)
+      } catch (error) {
+        if (error && error.code === 'ESRCH') process.kill(workerData.serverPid, 'SIGTERM')
+      }
+    }, workerData.intervalMs)
+  `, {
+    eval: true,
+    workerData: {
+      parentPid: expectedParentPid,
+      serverPid: process.pid,
+      intervalMs: PARENT_WATCH_INTERVAL_MS,
+    },
+  })
+  worker.unref()
+  return worker
+}
 
 function isServeRequest(value: unknown): value is ServeRequest {
   if (!value || typeof value !== 'object') return false
@@ -305,6 +358,7 @@ async function startRootWatchers(): Promise<RootWatcherState | null> {
 }
 
 export async function runStdioServe(buildProgram: () => Command): Promise<void> {
+  const parentWatchdog = startParentDeathWatchdog()
   // Panel bursts (the app fetching every panel for one period) reuse a parse
   // whose through-now range end differs by less than this window, instead of
   // re-running the discovery sweep per panel. Serve-only: one-shot CLI runs
@@ -445,8 +499,10 @@ export async function runStdioServe(buildProgram: () => Command): Promise<void> 
   })
 
   // The app owns this process: stdin closing (or failing) means the app is
-  // gone. Always release FSEvents handles and the module-global validator;
-  // otherwise an existing Claude root keeps a naturally closed child alive.
+  // gone. The parent watchdog also covers crashes and force-quits that do not
+  // deliver EOF. Always release FSEvents handles and the module-global
+  // validator; otherwise an existing Claude root keeps a naturally closed
+  // child alive.
   const transportClosed = new Promise<void>((resolve) => {
     rl.once('close', resolve)
     process.stdin.once('end', resolve)
@@ -455,6 +511,7 @@ export async function runStdioServe(buildProgram: () => Command): Promise<void> 
   try {
     await transportClosed
   } finally {
+    if (parentWatchdog) void parentWatchdog.terminate()
     rl.close()
     await watcherSetup
     rootReuseValidation = null

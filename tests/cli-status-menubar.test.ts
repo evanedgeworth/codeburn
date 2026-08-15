@@ -111,8 +111,9 @@ describe('codeburn status --format menubar-json', () => {
       expect(current).toHaveProperty('topModels')
       expect(current).toHaveProperty('providers')
 
-      const history = payload['history'] as { daily: unknown[] }
+      const history = payload['history'] as { daily: Array<{ providers?: Record<string, number> }> }
       expect(Array.isArray(history.daily)).toBe(true)
+      expect(history.daily.some(day => (day.providers?.['claude'] ?? 0) > 0)).toBe(true)
     } finally {
       await rm(home, { recursive: true, force: true })
     }

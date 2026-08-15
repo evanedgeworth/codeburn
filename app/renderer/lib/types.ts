@@ -363,7 +363,6 @@ export type PlanId =
   | 'custom'
   | 'none'
 export type PlanProvider = 'claude' | 'codex' | 'cursor' | 'grok' | 'all'
-export type PlanStatus = 'under' | 'near' | 'over'
 
 /** Serialized plan summary from `attachPlanSummaries` (src/main.ts:90). */
 export type JsonPlanSummary = {
@@ -372,7 +371,6 @@ export type JsonPlanSummary = {
   budget: number
   spent: number
   percentUsed: number
-  status: PlanStatus
   projectedMonthEnd: number
   daysUntilReset: number
   periodStart: string

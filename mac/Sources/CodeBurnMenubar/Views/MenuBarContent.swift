@@ -20,6 +20,7 @@ struct MenuBarContent: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
                         HeroSection()
+                        BillingTruthSection()
                         Divider().opacity(0.5)
                         PeriodSegmentedControl()
                         ScopeSegmentedControl()
@@ -403,10 +404,36 @@ private struct Header: View {
             // Lists all warning providers with their worst-window percent so
             // the user knows whether to slow down on Claude, Codex, or both.
             QuotaWarningRow(status: store.aggregateQuotaStatus)
+            BillingWarningRow(alerts: store.billingAlerts)
         }
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 8)
+    }
+}
+
+private struct BillingWarningRow: View {
+    let alerts: [BillingAlert]
+
+    var body: some View {
+        if let alert = alerts.first {
+            let isDanger = alerts.contains { $0.severity == .danger }
+            HStack(spacing: 6) {
+                Image(systemName: isDanger ? "exclamationmark.triangle.fill" : "questionmark.circle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(alert.message + (alerts.count > 1 ? " · +\(alerts.count - 1) more" : ""))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isDanger ? Color.red : Color.orange)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill((isDanger ? Color.red : Color.orange).opacity(0.12))
+            )
+        }
     }
 }
 
@@ -434,14 +461,18 @@ private struct QuotaWarningRow: View {
     }
 
     private var message: String {
-        let parts = status.warnings.map { "\($0.name) \(Int($0.percent.rounded()))%" }
+        let parts = status.warnings.map {
+            $0.projected
+                ? "\($0.name) projected \(Int($0.percent.rounded()))% by reset"
+                : "\($0.name) \(Int($0.percent.rounded()))%"
+        }
         if parts.count == 1 {
             // Reads "Claude over limit (105%)" when any provider exceeds the
             // quota cap, instead of the awkward "Claude 105% of quota used".
             if case .danger = status.severity {
                 return "\(status.warnings[0].name) over limit (\(Int(status.warnings[0].percent.rounded()))%)"
             }
-            return "\(parts[0]) of quota used"
+            return status.warnings[0].projected ? parts[0] : "\(parts[0]) of quota used"
         }
         return parts.joined(separator: " · ")
     }

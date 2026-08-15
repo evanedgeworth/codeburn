@@ -45,7 +45,7 @@ describe('getPlanUsage', () => {
     parseAllSessionsMock.mockReset()
   })
 
-  it('passes provider filter from plan and computes status', async () => {
+  it('passes provider filter from plan and computes the value ratio', async () => {
     parseAllSessionsMock.mockResolvedValue([
       {
         totalCostUSD: 160,
@@ -67,7 +67,6 @@ describe('getPlanUsage', () => {
     )
     expect(usage.spentApiEquivalentUsd).toBe(160)
     expect(usage.percentUsed).toBe(80)
-    expect(usage.status).toBe('near')
   })
 
   it('projects using median daily spend (not mean)', async () => {
@@ -123,7 +122,6 @@ describe('getPlanUsage', () => {
 
     expect(usage.spentApiEquivalentUsd).toBe(40)
     expect(usage.budgetUsd).toBe(100)
-    expect(usage.status).toBe('under')
   })
 
   it('projects month-end spend from API call timestamps', () => {

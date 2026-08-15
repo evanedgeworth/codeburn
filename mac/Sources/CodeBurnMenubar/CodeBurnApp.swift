@@ -147,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
         removeLegacyRefreshAgent()
         registerLoginItemIfNeeded()
         observeSubscriptionDisconnect()
+        Task { await store.loadBillingReconciliation() }
         Task { await updateChecker.checkIfNeeded() }
     }
 
@@ -1268,7 +1269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
     private func contextMenuUsageSummary() -> String {
         guard let current = store.todayPayload?.current else { return "Today · no usage yet" }
         let calls = current.calls == 1 ? "1 call" : "\(current.calls) calls"
-        return "Today · \(current.cost.asCurrency()) · \(calls)"
+        return "Today · \(current.cost.asCurrency()) API-equivalent · \(calls)"
     }
 
     private var settingsWindowController: NSWindowController?

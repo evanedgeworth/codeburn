@@ -611,7 +611,7 @@ function SectionPlaceholder({ title }: { title: string }) {
   )
 }
 
-/** App-wide daily-budget alert: reads today's usage from the overview payload and
+/** App-wide token-budget alert: reads today's usage from the overview payload and
  * warns at >=80% / alerts at >=100% of the configured cap. Dismissible per day. */
 function DailyBudgetBanner({ payload, provider }: { payload: MenubarPayload | null; provider: string }) {
   const [, bumpDismiss] = useState(0)
@@ -621,7 +621,7 @@ function DailyBudgetBanner({ payload, provider }: { payload: MenubarPayload | nu
   // Token totals in history.daily are zeroed under a specific-provider filter
   // (only cost is per-provider), so a token cap can only be evaluated honestly on
   // the all-providers view; otherwise we'd compare usage against a false zero.
-  if (budget.kind === 'tokens' && provider !== 'all') return null
+  if (provider !== 'all') return null
 
   const todayKey = localDateKey(new Date())
   let dismissed: string | null = null
@@ -630,18 +630,16 @@ function DailyBudgetBanner({ payload, provider }: { payload: MenubarPayload | nu
 
   // Today's entry may be absent when there has been no activity yet: that's 0 used.
   const entry = payload.history.daily.find(day => day.date === todayKey)
-  const used = budget.kind === 'usd'
-    ? entry?.cost ?? 0
-    : entry ? entry.inputTokens + entry.outputTokens : 0
+  const used = entry ? entry.inputTokens + entry.outputTokens : 0
   const percent = (used / budget.value) * 100
   if (percent < 80) return null
 
   const exceeded = percent >= 100
-  const spent = budget.kind === 'usd' ? formatUsd(used) : formatCompact(used)
-  const cap = budget.kind === 'usd' ? formatUsd(budget.value) : formatCompact(budget.value)
+  const spent = formatCompact(used)
+  const cap = formatCompact(budget.value)
   const text = exceeded
-    ? `Daily budget exceeded: ${spent} of ${cap}`
-    : `Today's spend is at ${Math.floor(percent)}% of your daily budget`
+    ? `Daily token budget exceeded: ${spent} of ${cap}`
+    : `Today's tokens are at ${Math.floor(percent)}% of your daily budget`
 
   const dismiss = () => {
     try { globalThis.localStorage?.setItem('codeburn.dailyBudget.dismissed', todayKey) } catch { /* storage can be unavailable */ }

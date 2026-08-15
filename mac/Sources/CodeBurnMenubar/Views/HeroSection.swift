@@ -66,6 +66,16 @@ struct HeroSection: View {
                 .padding(.top, 2)
             }
 
+            if let billingCaption {
+                HStack(spacing: 4) {
+                    Image(systemName: "creditcard.fill")
+                        .font(.system(size: 9))
+                    Text(billingCaption)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+            }
+
             if let usage = combinedUsage {
                 CombinedDeviceBreakdown(usage: usage, formatTokens: formatTokens)
             } else if store.activeScope == .combined, store.lastError != nil {
@@ -141,6 +151,16 @@ struct HeroSection: View {
         let savings = store.payload.current.localModelSavings.totalUSD
         guard savings > 0 else { return nil }
         return "Saved \(savings.asCurrency()) with local models"
+    }
+
+    private var billingCaption: String? {
+        guard combinedUsage == nil,
+              store.displayMetric == .cost,
+              store.hasSubscriptionCoverage
+        else { return nil }
+        let billing = store.billingCost(for: store.payload.current)
+        guard billing.subscriptionCoveredUSD > 0 else { return nil }
+        return "Estimated billable \(billing.estimatedBillableUSD.asCurrency()) · \(billing.subscriptionCoveredUSD.asCurrency()) subscription-covered"
     }
 
     private var todayDate: String {

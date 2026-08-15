@@ -1,6 +1,41 @@
 import Darwin
 import Foundation
 
+enum OrphanedServeCleanup {
+    static func pids(from processList: String) -> [pid_t] {
+        processList.split(separator: "\n").compactMap { line in
+            let fields = line.split(maxSplits: 2, whereSeparator: { $0.isWhitespace })
+            let command = fields.count == 3 ? fields[2].split(whereSeparator: { $0.isWhitespace }) : []
+            guard fields.count == 3,
+                  let pid = pid_t(fields[0]),
+                  let parent = pid_t(fields[1]),
+                  parent == 1,
+                  command.count >= 3,
+                  URL(fileURLWithPath: String(command[command.count - 3])).lastPathComponent == "codeburn",
+                  command.suffix(2).elementsEqual(["serve", "--stdio"])
+            else { return nil }
+            return pid
+        }
+    }
+
+    static func terminateOrphans() {
+        let ps = Process()
+        let stdout = Pipe()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-axo", "pid=,ppid=,command="]
+        ps.standardOutput = stdout
+        ps.standardError = FileHandle.nullDevice
+        guard (try? ps.run()) != nil else { return }
+        ps.waitUntilExit()
+        guard ps.terminationStatus == 0,
+              let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        else { return }
+        for pid in pids(from: output) where pid != getpid() {
+            kill(pid, SIGTERM)
+        }
+    }
+}
+
 /// A resident `codeburn serve --stdio` child, held so payload fetches skip the
 /// per-spawn cost (node boot + a 100MB+ session-cache parse on large corpora,
 /// seconds per fetch at the CLI level). Requests are JSON lines `{id, args}`;
@@ -101,6 +136,7 @@ actor ServeConnection {
     /// the first request in case the startup task has not run yet.
     func ensureStarted() {
         guard process == nil, deaths < Self.maxDeaths else { return }
+        OrphanedServeCleanup.terminateOrphans()
         // This single resident serves both background and user-visible status
         // requests. Its cold hydration replaces the old interactive one-shot,
         // so keep the child at the same user-initiated QoS as visible fetches.

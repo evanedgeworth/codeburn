@@ -121,6 +121,7 @@ struct DailyHistoryEntry: Codable, Sendable {
     let cacheReadTokens: Int
     let cacheWriteTokens: Int
     let topModels: [DailyModelBreakdown]
+    var providers: [String: Double] = [:]
 
     /// Pricing-ratio prior: input + 5x output + cache_creation + 0.1x cache_read.
     /// Matches Anthropic's published per-token pricing on Sonnet/Opus closely enough to be a useful proxy.
@@ -132,7 +133,7 @@ struct DailyHistoryEntry: Codable, Sendable {
 extension DailyHistoryEntry {
     /// Required for legacy payloads (no topModels emitted yet).
     enum CodingKeys: String, CodingKey {
-        case date, cost, savingsUSD, calls, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, topModels
+        case date, cost, savingsUSD, calls, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, topModels, providers
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -145,6 +146,7 @@ extension DailyHistoryEntry {
         cacheReadTokens = try c.decode(Int.self, forKey: .cacheReadTokens)
         cacheWriteTokens = try c.decode(Int.self, forKey: .cacheWriteTokens)
         topModels = try c.decodeIfPresent([DailyModelBreakdown].self, forKey: .topModels) ?? []
+        providers = try c.decodeIfPresent([String: Double].self, forKey: .providers) ?? [:]
     }
 }
 

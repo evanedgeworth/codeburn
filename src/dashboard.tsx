@@ -469,33 +469,12 @@ function planLabel(planUsage: PlanUsage): string {
   return planUsage.plan.id === 'custom' ? `${name} (${planUsage.plan.provider})` : name
 }
 
-function planColor(planUsage: PlanUsage): string {
-  return planUsage.status === 'over'
-    ? '#F55B5B'
-    : planUsage.status === 'near'
-      ? ORANGE
-      : '#5BF58C'
+function planColor(): string {
+  return GOLD
 }
 
-// Headline and status share one line's worth of terminal each, both truncated
-// end-first, so the headline stays short enough to keep the percentage visible
-// at 80 columns and the status leads with the disclaimer, not the arithmetic.
-export function planBudgetHeadline(planUsage: PlanUsage): string {
-  return `${planLabel(planUsage)}: ${formatCost(planUsage.spentApiEquivalentUsd)} API-equivalent / ${formatCost(planUsage.budgetUsd)} budget`
-}
-
-export function planStatusText(planUsage: PlanUsage): string {
-  // The period is anniversary-based (plan.resetDay, 1-28, settable per plan via
-  // `codeburn plan set --reset-day`), so this is a monthly budget window, not a
-  // calendar month. The headline already says "budget"; do not repeat it here.
-  const detail = `Not a live provider window. Projected: ${formatCost(planUsage.projectedMonthUsd)}. Next budget reset in ${planUsage.daysUntilReset} days.`
-  if (planUsage.status === 'under') {
-    return `Well within budget. ${detail}`
-  }
-  if (planUsage.status === 'near') {
-    return `Approaching budget. ${detail}`
-  }
-  return `${(planUsage.spentApiEquivalentUsd / Math.max(planUsage.budgetUsd, 1)).toFixed(1)}x the sticker price. ${detail}`
+function planStatusText(planUsage: PlanUsage): string {
+  return `Projected API-equivalent value: ${formatCost(planUsage.projectedMonthUsd)} (reset in ${planUsage.daysUntilReset} days). Not a billable-cost alert.`
 }
 
 function Overview({ projects, label, width, planUsages, durable }: { projects: ProjectSummary[]; label: string; width: number; planUsages?: PlanUsage[]; durable?: DurableOverview }) {
@@ -524,7 +503,7 @@ function Overview({ projects, label, width, planUsages, durable }: { projects: P
       </Text>
       <Text wrap="truncate-end">
         <Text bold color={GOLD}>{formatCost(totalCost)}</Text>
-        <Text dimColor> cost   </Text>
+        <Text dimColor> API-equivalent   </Text>
         <Text bold>{totalCalls.toLocaleString()}</Text>
         <Text dimColor> calls   </Text>
         <Text bold>{String(totalSessions)}</Text>
@@ -547,7 +526,7 @@ function Overview({ projects, label, width, planUsages, durable }: { projects: P
       {activePlanUsages.length > 0 && (
         <>
           {activePlanUsages.map(planUsage => {
-            const color = planColor(planUsage)
+            const color = planColor()
             return (
               <React.Fragment key={planUsage.plan.provider}>
                 <Text wrap="truncate-end">

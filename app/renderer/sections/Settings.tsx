@@ -138,7 +138,7 @@ function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource, 
   })
   const [defaultPeriod, setDefaultPeriod] = useState(() => readSetting('codeburn.defaultPeriod') ?? 'today')
   const cadence = useRefreshCadence()
-  const [budgetKind, setBudgetKind] = useState<'off' | 'usd' | 'tokens'>(() => readDailyBudget()?.kind ?? 'off')
+  const [budgetKind, setBudgetKind] = useState<'off' | 'tokens'>(() => readDailyBudget()?.kind ?? 'off')
   const [budgetInput, setBudgetInput] = useState(() => { const budget = readDailyBudget(); return budget ? String(budget.value) : '' })
   const [budgetError, setBudgetError] = useState('')
   const update = useUpdateStatus()
@@ -156,7 +156,7 @@ function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource, 
 
   // Store on change; a positive finite amount persists, anything else clears the
   // cap (so the banner turns off) and, when non-empty, flags a validation error.
-  const persistBudget = (kind: 'off' | 'usd' | 'tokens', input: string) => {
+  const persistBudget = (kind: 'off' | 'tokens', input: string) => {
     const trimmed = input.trim()
     if (kind === 'off' || trimmed === '') { setBudgetError(''); writeSetting('codeburn.dailyBudget', ''); return }
     const value = Number(trimmed)
@@ -205,7 +205,7 @@ function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource, 
           <div className="about-row"><label className="tx" htmlFor="settings-period">Default period<small>Applied on next launch.</small></label><span className="r"><Dropdown id="settings-period" ariaLabel="Default period" value={defaultPeriod} options={[{ value: 'today', label: 'Today' }, { value: 'week', label: '7d' }, { value: '30days', label: '30d' }, { value: 'month', label: 'Month' }, { value: 'all', label: 'All' }]} onChange={value => { setDefaultPeriod(value); writeSetting('codeburn.defaultPeriod', value) }} width={92} /></span></div>
           <div className="about-row"><label className="tx" htmlFor="settings-scope">Scope<small>Combined aggregates usage across every paired device, like the menubar. Local shows this device only.</small></label><span className="r"><Dropdown id="settings-scope" ariaLabel="Scope" value={scope} options={[{ value: 'local', label: 'Local' }, { value: 'combined', label: 'Combined' }]} onChange={value => onScopeChange?.(value)} width={110} /></span></div>
           <div className="about-row"><label className="tx" htmlFor="settings-refresh">Refresh every<small>How often data auto-refreshes. Manual updates only on {shortcutLabel('R')}.</small></label><span className="r"><Dropdown id="settings-refresh" ariaLabel="Refresh every" value={cadence.value} options={REFRESH_OPTIONS.map(option => ({ value: option.value, label: option.label }))} onChange={cadence.setValue} width={124} /></span></div>
-          <div className="about-row"><label className="tx" htmlFor="settings-budget">Daily budget<small>Warns at 80%, alerts at 100%.</small></label><span className="r"><Dropdown id="settings-budget" ariaLabel="Daily budget" value={budgetKind} options={[{ value: 'off', label: 'Off' }, { value: 'usd', label: 'USD amount' }, { value: 'tokens', label: 'Tokens' }]} onChange={value => { const kind = value as 'off' | 'usd' | 'tokens'; setBudgetKind(kind); persistBudget(kind, budgetInput) }} width={120} />{budgetKind !== 'off' && <input className="set-input" type="text" inputMode="decimal" aria-label="Daily budget amount" placeholder={budgetKind === 'usd' ? 'USD' : 'tokens'} value={budgetInput} onChange={event => { setBudgetInput(event.target.value); persistBudget(budgetKind, event.target.value) }} style={{ width: 90 }} />}</span></div>
+          <div className="about-row"><label className="tx" htmlFor="settings-budget">Daily token budget<small>Warns at 80%, alerts at 100%. Cash alerts live in the menubar billing view.</small></label><span className="r"><Dropdown id="settings-budget" ariaLabel="Daily token budget" value={budgetKind} options={[{ value: 'off', label: 'Off' }, { value: 'tokens', label: 'Tokens' }]} onChange={value => { const kind = value as 'off' | 'tokens'; setBudgetKind(kind); persistBudget(kind, budgetInput) }} width={120} />{budgetKind !== 'off' && <input className="set-input" type="text" inputMode="decimal" aria-label="Daily token budget amount" placeholder="tokens" value={budgetInput} onChange={event => { setBudgetInput(event.target.value); persistBudget(budgetKind, event.target.value) }} style={{ width: 90 }} />}</span></div>
           {budgetError && <p className="set-action-msg error">{budgetError}</p>}
         </div>
         <div className="about-sec set-last-sec">
@@ -369,7 +369,7 @@ function PlansPane({ period, refreshToken, onNavigate, onConfigMutated }: { peri
   }
 
   return <section className="set-p on">
-    <div><h3 className="set-h">Plans</h3><p className="set-sub">Claude and Codex subscriptions connect and auto-detect your tier. Set a manual budget plan for any other provider.</p></div>
+    <div><h3 className="set-h">Plans</h3><p className="set-sub">Claude and Codex subscriptions connect and auto-detect your tier. Add another membership to compare its price with API-equivalent value.</p></div>
     <div className="card">
       <div className="about-sec set-last-sec">
         <div className="about-sec-h">Detected subscriptions</div>
@@ -378,8 +378,8 @@ function PlansPane({ period, refreshToken, onNavigate, onConfigMutated }: { peri
     </div>
     <div className="card">
       <div className="about-sec">
-        <div className="about-sec-h">Budget plans (manual)</div>
-        {plans.error ? <SettingsErrorText error={plans.error} /> : !plans.data ? <p className="set-cap">Loading plans…</p> : configured.length === 0 ? <p className="set-cap">No manual plans configured.</p> : configured.map(plan => <div className="about-row" key={plan.provider}><span className="tx">{PLAN_PRESETS.find(item => item.id === plan.id)?.label ?? plan.id}<small>{formatConverted(plan.budget)}/month · {plan.provider} · {plan.percentUsed}% used</small>{(plan.provider === 'claude' || plan.provider === 'codex') && <small>superseded by the detected subscription</small>}</span><span className="r"><ConfirmButton label="Remove" prompt="Remove?" onConfirm={() => remove(plan)} /></span></div>)}
+        <div className="about-sec-h">Membership values (manual)</div>
+        {plans.error ? <SettingsErrorText error={plans.error} /> : !plans.data ? <p className="set-cap">Loading plans…</p> : configured.length === 0 ? <p className="set-cap">No manual plans configured.</p> : configured.map(plan => <div className="about-row" key={plan.provider}><span className="tx">{PLAN_PRESETS.find(item => item.id === plan.id)?.label ?? plan.id}<small>{formatConverted(plan.budget)}/month · {plan.provider} · {plan.percentUsed}% API-equivalent value</small>{(plan.provider === 'claude' || plan.provider === 'codex') && <small>superseded by the detected subscription</small>}</span><span className="r"><ConfirmButton label="Remove" prompt="Remove?" onConfirm={() => remove(plan)} /></span></div>)}
       </div>
       <div className="about-sec set-last-sec">
         <div className="about-row"><label className="tx" htmlFor="settings-plan-preset">Add a plan</label><span className="r"><Dropdown id="settings-plan-preset" ariaLabel="Add a plan" value={presetId} options={MANUAL_PLAN_PRESETS.map(preset => ({ value: preset.id, label: preset.label }))} onChange={value => setPresetId(value as PlanPreset['id'])} width={160} /><button className="btnp btnp-primary" onClick={add}>Add</button></span></div>

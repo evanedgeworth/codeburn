@@ -87,6 +87,203 @@ final class AppStore {
         didSet { UserDefaults.standard.set(dailyTokenBudget, forKey: "CodeBurnDailyTokenBudget") }
     }
 
+    var claudeCoverageMode = BillingCoveragePreferences.load(provider: .claude) {
+        didSet { BillingCoveragePreferences.save(claudeCoverageMode, provider: .claude) }
+    }
+    var codexCoverageMode = BillingCoveragePreferences.load(provider: .codex) {
+        didSet { BillingCoveragePreferences.save(codexCoverageMode, provider: .codex) }
+    }
+    var cursorCoverageMode = BillingCoveragePreferences.load(provider: .cursor) {
+        didSet { BillingCoveragePreferences.save(cursorCoverageMode, provider: .cursor) }
+    }
+
+    private(set) var billingSnapshots: [BillingProvider: VendorBillingSnapshot] = [:]
+    private(set) var billingSyncStates: [BillingProvider: BillingSyncState] = Dictionary(
+        uniqueKeysWithValues: BillingProvider.allCases.map {
+            ($0, BillingCredentialStore.containsCredential(for: $0) ? .idle : .disconnected)
+        }
+    )
+    let membershipPlans = MembershipPlanStore.load()
+
+    var billingPolicies: [BillingProvider: BillingProviderPolicy] {
+        Dictionary(uniqueKeysWithValues: BillingProvider.allCases.map { provider in
+            (provider, BillingModeDetector.policy(provider: provider, mode: coverageMode(for: provider)))
+        })
+    }
+
+    func coverageMode(for provider: BillingProvider) -> BillingCoverageMode {
+        switch provider {
+        case .claude: claudeCoverageMode
+        case .codex: codexCoverageMode
+        case .cursor: cursorCoverageMode
+        }
+    }
+
+    func setCoverageMode(_ mode: BillingCoverageMode, for provider: BillingProvider) {
+        switch provider {
+        case .claude: claudeCoverageMode = mode
+        case .codex: codexCoverageMode = mode
+        case .cursor: cursorCoverageMode = mode
+        }
+    }
+
+    var hasSubscriptionCoverage: Bool {
+        billingPolicies.values.contains { $0.resolution == .covered }
+    }
+
+    func billingCost(for current: CurrentBlock) -> BillingCostBreakdown {
+        BillingCostCalculator.breakdown(
+            apiEquivalentUSD: current.cost,
+            providerCosts: current.providers,
+            policies: billingPolicies
+        )
+    }
+
+    var billingHistory: [BillingDailyEntry] {
+        BillingHistoryCalculator.entries(payload.history.daily, policies: billingPolicies)
+    }
+
+    var membershipValueSummary: MembershipValueSummary {
+        BillingHistoryCalculator.membershipValue(history: payload.history.daily, plans: membershipPlans)
+    }
+
+    func billingTruth(for current: CurrentBlock) -> BillingTruth {
+        let breakdown = billingCost(for: current)
+        let used = Set(breakdown.providers.map(\.provider))
+        let relevantSnapshots = used.compactMap { billingSnapshots[$0] }.filter { !$0.isStale }
+        let fullyReconciled = !used.isEmpty
+            && relevantSnapshots.count == used.count
+            && relevantSnapshots.allSatisfy { $0.monthToDateUSD != nil }
+        let reconciled = fullyReconciled
+            ? relevantSnapshots.compactMap(\.monthToDateUSD).reduce(0, +)
+            : nil
+        let fetched = fullyReconciled ? relevantSnapshots.map(\.fetchedAt).min() : nil
+        let confidence: BillingConfidence
+        if fullyReconciled {
+            confidence = .vendorReconciled
+        } else if used.contains(where: { billingPolicies[$0]?.mode != .automatic }) {
+            confidence = .explicitSetting
+        } else if used.allSatisfy({ billingPolicies[$0]?.automaticResolution != .unknown }) {
+            confidence = .authDetected
+        } else {
+            confidence = .localEstimate
+        }
+        return BillingTruth(
+            breakdown: breakdown,
+            reconciledMonthToDateUSD: reconciled,
+            reconciliationFetchedAt: fetched,
+            confidence: confidence
+        )
+    }
+
+    var billingAlerts: [BillingAlert] {
+        var alerts: [BillingAlert] = []
+        let policies = billingPolicies
+        for provider in BillingProvider.allCases {
+            guard let snapshot = billingSnapshots[provider] else { continue }
+            if snapshot.isStale {
+                alerts.append(BillingAlert(
+                    severity: .warning,
+                    message: "\(provider.displayName) billing data is stale"
+                ))
+            }
+            if policies[provider]?.resolution == .covered,
+               let billed = snapshot.monthToDateUSD,
+               billed >= 0.01
+            {
+                alerts.append(BillingAlert(
+                    severity: .danger,
+                    message: "\(provider.displayName) reports \(billed.asCompactCurrency()) billed this month despite covered mode"
+                ))
+            }
+        }
+        let unknown = billingCost(for: payload.current).unknownAttributionUSD
+        if unknown >= 0.01 {
+            alerts.append(BillingAlert(
+                severity: .warning,
+                message: "\(unknown.asCompactCurrency()) has uncertain billing attribution"
+            ))
+        }
+        return alerts
+    }
+
+    func loadBillingReconciliation(refreshConnected: Bool = true) async {
+        billingSnapshots = await BillingSnapshotStore.shared.load()
+        for provider in BillingProvider.allCases {
+            billingSyncStates[provider] = BillingCredentialStore.containsCredential(for: provider)
+                ? .idle
+                : .disconnected
+        }
+        if refreshConnected { await refreshBillingReconciliation() }
+    }
+
+    func connectBillingProvider(_ provider: BillingProvider, credential: String) async {
+        let previousCredential = try? BillingCredentialStore.read(for: provider)
+        do {
+            try BillingCredentialStore.save(credential, for: provider)
+            billingSyncStates[provider] = .idle
+            await refreshBillingReconciliation(provider: provider)
+            if case let .failed(message) = billingSyncStates[provider] {
+                if let previousCredential {
+                    try BillingCredentialStore.save(previousCredential, for: provider)
+                } else {
+                    try BillingCredentialStore.delete(for: provider)
+                }
+                billingSyncStates[provider] = .failed(message)
+            }
+        } catch {
+            if let previousCredential {
+                try? BillingCredentialStore.save(previousCredential, for: provider)
+            } else {
+                try? BillingCredentialStore.delete(for: provider)
+            }
+            billingSyncStates[provider] = .failed(sanitizeForUI(error.localizedDescription) ?? "Could not save credential")
+        }
+    }
+
+    func isBillingProviderConnected(_ provider: BillingProvider) -> Bool {
+        BillingCredentialStore.containsCredential(for: provider)
+    }
+
+    func disconnectBillingProvider(_ provider: BillingProvider) async {
+        do {
+            try BillingCredentialStore.delete(for: provider)
+            billingSnapshots.removeValue(forKey: provider)
+            await BillingSnapshotStore.shared.save(billingSnapshots)
+            billingSyncStates[provider] = .disconnected
+        } catch {
+            billingSyncStates[provider] = .failed(sanitizeForUI(error.localizedDescription) ?? "Could not disconnect")
+        }
+    }
+
+    func refreshBillingReconciliation(provider: BillingProvider? = nil) async {
+        let targets = provider.map { [$0] } ?? BillingProvider.allCases
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        let start = calendar.date(byAdding: .day, value: -179, to: end) ?? end.addingTimeInterval(-179 * 86_400)
+        for target in targets {
+            guard let credential = try? BillingCredentialStore.read(for: target) else {
+                billingSyncStates[target] = .disconnected
+                continue
+            }
+            billingSyncStates[target] = .syncing
+            do {
+                let snapshot = try await BillingReconciliationService.shared.fetch(
+                    provider: target,
+                    credential: credential,
+                    start: start,
+                    end: end
+                )
+                billingSnapshots[target] = snapshot
+                billingSyncStates[target] = .synced(snapshot.fetchedAt)
+                await BillingSnapshotStore.shared.save(billingSnapshots)
+            } catch {
+                billingSyncStates[target] = .failed(sanitizeForUI(error.localizedDescription) ?? "Billing sync failed")
+            }
+        }
+    }
+
     /// True when the menubar metric counts tokens rather than cost.
     var isTokenMetric: Bool { displayMetric == .tokens || displayMetric == .totalTokens }
 
@@ -94,11 +291,28 @@ final class AppStore {
     /// tracking tokens, otherwise USD cost. 0 means the alert is off.
     var activeDailyBudget: Double { isTokenMetric ? dailyTokenBudget : dailyBudget }
 
-    /// Today's total in the active metric (USD cost, or input+output tokens),
-    /// or nil when today's payload has not loaded yet.
+    /// Today's alert total: estimated billable USD after subscription coverage,
+    /// or input+output tokens. Nil when today's payload has not loaded yet.
     var todayMetricTotal: Double? {
         guard let current = todayPayload?.current else { return nil }
-        return isTokenMetric ? Double(current.inputTokens + current.outputTokens) : current.cost
+        if isTokenMetric { return Double(current.inputTokens + current.outputTokens) }
+        // When connected, vendor daily cost is invoice truth and may include
+        // charges that are absent from local session logs. Keep the higher of
+        // vendor actual and the fail-safe local estimate so neither source can
+        // silently suppress a real dollar alert.
+        return max(billingCost(for: current).estimatedBillableUSD, vendorBillableTodayUSD ?? 0)
+    }
+
+    var vendorBillableTodayUSD: Double? {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        let snapshots = billingSnapshots.values.filter { !$0.isStale }
+        guard !snapshots.isEmpty else { return nil }
+        return snapshots.reduce(0) { $0 + ($1.dailyUSD[today] ?? 0) }
     }
 
     /// True when today's usage has reached or passed the active daily budget.
@@ -1302,27 +1516,48 @@ final class AppStore {
     /// every connected provider at >= 70% utilization.
     struct AggregateQuotaStatus {
         let severity: QuotaSummary.Severity
-        let warnings: [(name: String, percent: Double)]   // sorted desc by percent
+        let warnings: [(name: String, percent: Double, projected: Bool)]
     }
 
     var aggregateQuotaStatus: AggregateQuotaStatus {
-        var providers: [(name: String, percent: Double)] = []
+        var providers: [(name: String, percent: Double, projected: Bool)] = []
         if let usage = subscription, shouldIncludeCachedQuota(loadState: subscriptionLoadState) {
-            let worst = [
+            let rawWorst = [
                 usage.fiveHourPercent,
                 usage.sevenDayPercent,
                 usage.sevenDayOpusPercent,
                 usage.sevenDaySonnetPercent,
             ].compactMap { $0 }.max() ?? 0
-            if worst > 0 { providers.append(("Claude", worst)) }
+            let weeklyWindows: [(Double?, Date?)] = [
+                (usage.sevenDayPercent, usage.sevenDayResetsAt),
+                (usage.sevenDayOpusPercent, usage.sevenDayOpusResetsAt),
+                (usage.sevenDaySonnetPercent, usage.sevenDaySonnetResetsAt),
+            ]
+            let projected = weeklyWindows.compactMap { percent, reset in
+                percent.flatMap {
+                    QuotaPace.evaluate(usedPercent: $0, resetsAt: reset, windowSeconds: 7 * 24 * 3600)?.projectedPercent
+                }
+            }.max() ?? 0
+            let effective = max(rawWorst, projected)
+            if effective > 0 { providers.append(("Claude", effective, projected > rawWorst && rawWorst < 70)) }
         }
         if let usage = codexUsage, shouldIncludeCachedQuota(loadState: codexLoadState) {
-            let worst = max(usage.primary?.usedPercent ?? 0, usage.secondary?.usedPercent ?? 0)
-            if worst > 0 { providers.append(("Codex", worst)) }
+            let windows = [usage.primary, usage.secondary].compactMap { $0 }
+            let rawWorst = windows.map(\.usedPercent).max() ?? 0
+            let projected = windows.compactMap { window in
+                guard window.limitWindowSeconds > Int(QuotaPace.etaSuppressionMaxSeconds) else { return nil }
+                return QuotaPace.evaluate(
+                    usedPercent: window.usedPercent,
+                    resetsAt: window.resetsAt,
+                    windowSeconds: window.limitWindowSeconds
+                )?.projectedPercent
+            }.max() ?? 0
+            let effective = max(rawWorst, projected)
+            if effective > 0 { providers.append(("Codex", effective, projected > rawWorst && rawWorst < 70)) }
         }
         if let usage = kimiUsage, shouldIncludeCachedQuota(loadState: kimiLoadState) {
             let worst = max(usage.primary?.usedPercent ?? 0, usage.details.map(\.usedPercent).max() ?? 0)
-            if worst > 0 { providers.append(("Kimi Code", worst)) }
+            if worst > 0 { providers.append(("Kimi Code", worst, false)) }
         }
         let worst = providers.map(\.percent).max() ?? 0
         let severity = QuotaSummary.severity(for: worst / 100)

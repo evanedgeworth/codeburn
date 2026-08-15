@@ -13,6 +13,10 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag("general")
 
+            BillingSettingsTab()
+                .tabItem { Label("Billing", systemImage: "dollarsign.circle") }
+                .tag("billing")
+
             ClaudeSettingsTab()
                 .tabItem { Label("Claude", systemImage: "brain") }
                 .tag("claude")
@@ -33,9 +37,9 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
                 .tag("about")
         }
-        // 6 tabs need ~600pt to render as a visible tab bar; narrower widths
+        // Seven tabs need extra width to render as a visible tab bar; narrower widths
         // make SwiftUI collapse the tab bar into a ">>" overflow menu.
-        .frame(width: 600, height: 430)
+        .frame(width: 690, height: 520)
     }
 }
 
@@ -87,7 +91,7 @@ private struct GeneralSettingsTab: View {
             ? (tokenCustom && store.dailyTokenBudget == 0)
             : (costCustom && store.dailyBudget == 0)
         if customEmpty { return "Enter an amount above, or the alert stays off." }
-        return "Flame icon turns yellow when today's \(store.isTokenMetric ? "tokens" : "cost") pass the daily budget."
+        return "Flame icon turns yellow when today's \(store.isTokenMetric ? "tokens" : "estimated billable cost") passes this limit."
     }
 
     var body: some View {
@@ -105,7 +109,7 @@ private struct GeneralSettingsTab: View {
                     get: { store.displayMetric },
                     set: { store.displayMetric = $0 }
                 )) {
-                    Text("Cost ($)").tag(DisplayMetric.cost)
+                    Text("API-equivalent ($)").tag(DisplayMetric.cost)
                     Text("Tokens (↑↓)").tag(DisplayMetric.tokens)
                     Text("Total Tokens").tag(DisplayMetric.totalTokens)
                     Text("Credits (Codex)").tag(DisplayMetric.credits)
@@ -171,8 +175,8 @@ private struct GeneralSettingsTab: View {
             }
 
             Section("Alerts") {
-                // The budget tracks whatever the menubar metric shows: dollars for
-                // the Cost metric, tokens for the Tokens / Total Tokens metrics.
+                // Dollar budgets track estimated billable cost after subscription
+                // coverage, while token budgets track the displayed token metric.
                 // "Custom…" reveals a field for an exact amount.
                 if store.isTokenMetric {
                     Picker("Daily budget", selection: Binding(
@@ -239,6 +243,9 @@ private struct GeneralSettingsTab: View {
                 Text(alertHelpText)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                Text("Billing coverage and optional invoice reconciliation are configured in the Billing tab.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
             .onAppear {
                 costCustom = store.dailyBudget > 0 && !costPresets.contains(store.dailyBudget)
@@ -264,6 +271,148 @@ private struct GeneralSettingsTab: View {
             CurrencyState.shared.apply(code: code, rate: fresh ?? cached, symbol: symbol)
         }
         CLICurrencyConfig.persist(code: code)
+    }
+}
+
+// MARK: - Billing
+
+private struct BillingSettingsTab: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        Form {
+            Section("Cost truth") {
+                Text("CodeBurn keeps three separate ledgers: API-equivalent value, subscription-covered value, and estimated billable cost. Only billable cost drives dollar alerts.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                let value = store.membershipValueSummary
+                if value.monthlyMembershipUSD > 0 {
+                    LabeledContent("Configured memberships") {
+                        Text(value.monthlyMembershipUSD.asCurrency() + " / month")
+                    }
+                    LabeledContent("API-equivalent value this month") {
+                        Text(value.monthToDateAPIEquivalentUSD.asCurrency())
+                    }
+                    if let ratio = value.equivalentValueRatio {
+                        LabeledContent("Equivalent value / membership") {
+                            Text(String(format: "%.1f×", ratio))
+                        }
+                    }
+                }
+            }
+
+            ForEach(BillingProvider.allCases) { provider in
+                BillingProviderSettingsSection(provider: provider)
+            }
+
+            Section("Privacy") {
+                Text("Admin keys are optional and stored only in your macOS Keychain. They are sent directly to the selected vendor's official billing endpoint and are never written to CodeBurn logs or configuration files.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+private struct BillingProviderSettingsSection: View {
+    @Environment(AppStore.self) private var store
+    let provider: BillingProvider
+    @State private var credential = ""
+
+    var body: some View {
+        Section(provider.displayName) {
+            Picker("Billing mode", selection: Binding(
+                get: { store.coverageMode(for: provider) },
+                set: { store.setCoverageMode($0, for: provider) }
+            )) {
+                ForEach(BillingCoverageMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.menu)
+
+            let policy = store.billingPolicies[provider]
+            HStack {
+                Image(systemName: resolutionIcon(policy?.resolution ?? .unknown))
+                    .foregroundStyle(resolutionColor(policy?.resolution ?? .unknown))
+                Text(policy?.reason ?? "Billing mode unavailable")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                SecureField(credentialPlaceholder, text: $credential)
+                    .textFieldStyle(.roundedBorder)
+                Button("Save & Sync") {
+                    let submitted = credential
+                    credential = ""
+                    Task { await store.connectBillingProvider(provider, credential: submitted) }
+                }
+                .disabled(credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            HStack(spacing: 8) {
+                Text(syncLabel)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(syncColor)
+                    .lineLimit(2)
+                Spacer()
+                if store.isBillingProviderConnected(provider) {
+                    Button("Refresh") {
+                        Task { await store.refreshBillingReconciliation(provider: provider) }
+                    }
+                    .disabled(store.billingSyncStates[provider] == .syncing)
+                    Button("Disconnect") {
+                        Task { await store.disconnectBillingProvider(provider) }
+                    }
+                }
+            }
+        }
+    }
+
+    private var credentialPlaceholder: String {
+        switch provider {
+        case .claude: "Optional Anthropic Admin API key"
+        case .codex: "Optional OpenAI organization Admin API key"
+        case .cursor: "Optional Cursor Team Admin API key"
+        }
+    }
+
+    private var syncLabel: String {
+        switch store.billingSyncStates[provider] ?? .disconnected {
+        case .disconnected: "Invoice reconciliation not connected"
+        case .idle: "Connected; waiting to sync"
+        case .syncing: "Syncing vendor billing data…"
+        case let .synced(date): "Vendor reconciled \(date.formatted(date: .abbreviated, time: .shortened))"
+        case let .failed(message): "Sync failed: \(message)"
+        }
+    }
+
+    private var syncColor: Color {
+        switch store.billingSyncStates[provider] ?? .disconnected {
+        case .failed: .red
+        case .synced: .green
+        default: .secondary
+        }
+    }
+
+    private func resolutionIcon(_ resolution: BillingResolution) -> String {
+        switch resolution {
+        case .covered: "checkmark.shield.fill"
+        case .billable: "creditcard.fill"
+        case .unknown: "questionmark.circle.fill"
+        }
+    }
+
+    private func resolutionColor(_ resolution: BillingResolution) -> Color {
+        switch resolution {
+        case .covered: .green
+        case .billable: .orange
+        case .unknown: .yellow
+        }
     }
 }
 

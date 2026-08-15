@@ -117,6 +117,11 @@ export type DailyHistoryEntry = {
   cacheReadTokens: number
   cacheWriteTokens: number
   topModels: DailyModelBreakdown[]
+  /// API-equivalent cost by internal provider id. Add-only so older payload
+  /// fixtures and remote peers remain compatible. Native clients use this to
+  /// build provider-aware subscription-covered and billable history instead of
+  /// applying today's provider mix to every historical day.
+  providers?: Record<string, number>
 }
 
 export type LocalModelSavings = {

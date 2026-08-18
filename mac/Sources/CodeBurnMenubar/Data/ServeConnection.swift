@@ -26,9 +26,13 @@ enum OrphanedServeCleanup {
         ps.standardOutput = stdout
         ps.standardError = FileHandle.nullDevice
         guard (try? ps.run()) != nil else { return }
+        // Drain while `ps` is still running. Waiting first deadlocks once a
+        // large process table fills the pipe buffer, so startup never reaches
+        // the resident serve child and every refresh falls back to a cold CLI.
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
         ps.waitUntilExit()
         guard ps.terminationStatus == 0,
-              let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+              let output = String(data: data, encoding: .utf8)
         else { return }
         for pid in pids(from: output) where pid != getpid() {
             kill(pid, SIGTERM)

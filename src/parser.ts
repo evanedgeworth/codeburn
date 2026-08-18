@@ -53,6 +53,7 @@ import type {
 } from './types.js'
 import { classifyTurn, BASH_TOOLS, EDIT_TOOLS } from './classifier.js'
 import { extractBashCommands } from './bash-utils.js'
+import { getCursorUsageStoreHash } from './cursor-server-import.js'
 
 function unsanitizePath(dirName: string): string {
   return dirName.replace(/-/g, '/')
@@ -2493,7 +2494,7 @@ function providerCallToCachedCall(call: ParsedProviderCall): CachedCall {
       webSearchRequests: call.webSearchRequests,
       cacheCreationOneHourTokens: 0,
     },
-    costUSD: (call.provider === 'mistral-vibe' || call.provider === 'antigravity' || call.provider === 'devin' || call.provider === 'vercel-gateway' || call.provider === 'hermes' || call.provider === 'kiro' || call.provider === 'codewhale' || call.provider === 'quickdesk' || call.provider === 'cline-cli') ? call.costUSD : undefined,
+    costUSD: (call.provider === 'mistral-vibe' || call.provider === 'antigravity' || call.provider === 'devin' || call.provider === 'vercel-gateway' || call.provider === 'hermes' || call.provider === 'kiro' || call.provider === 'codewhale' || call.provider === 'quickdesk' || call.provider === 'cline-cli' || (call.provider === 'cursor' && call.costIsEstimated === false)) ? call.costUSD : undefined,
     isEstimated: call.costIsEstimated || undefined,
     speed: call.speed,
     timestamp: call.timestamp,
@@ -3506,7 +3507,7 @@ function cacheKey(dateRange: DateRange | undefined, providerFilter: string | und
   // Pricing-affecting config participates so a memoized parse (exact-key or
   // burst-reused in a resident serve process) can never present costs priced
   // under aliases/overrides/savings the user has since changed.
-  return `${s}:${providerFilter ?? 'all'}:${claudeRoots}:${getProxyPathsConfigHash()}:${getModelAliasesConfigHash()}:${getPriceOverridesConfigHash()}:${getLocalModelSavingsConfigHash()}`
+  return `${s}:${providerFilter ?? 'all'}:${claudeRoots}:${getProxyPathsConfigHash()}:${getModelAliasesConfigHash()}:${getPriceOverridesConfigHash()}:${getLocalModelSavingsConfigHash()}:cursorUsage=${getCursorUsageStoreHash()}`
 }
 
 export function clearSessionCache(): void {

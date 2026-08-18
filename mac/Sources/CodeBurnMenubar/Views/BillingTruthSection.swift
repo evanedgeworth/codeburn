@@ -42,6 +42,24 @@ struct BillingTruthSection: View {
             .font(.system(size: 9.5, weight: .medium))
             .foregroundStyle(.secondary)
 
+            if let cursor = store.payload.current.cursorTracking {
+                let percent = Int((cursor.measuredPercent * 100).rounded())
+                let localPercent = max(0, 100 - percent)
+                HStack(spacing: 5) {
+                    Image(systemName: cursor.source == "server-export" ? "checkmark.circle.fill" : "waveform.path.ecg")
+                        .font(.system(size: 9, weight: .semibold))
+                    if cursor.source == "server-export" {
+                        Text("Cursor: \(percent)% server-measured · \(localPercent)% local estimate")
+                    } else {
+                        Text("Cursor: local estimate · import usage CSV for cache tokens")
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+
             let value = store.membershipValueSummary
             if let ratio = value.equivalentValueRatio, value.monthToDateAPIEquivalentUSD > 0 {
                 Text("Membership value: \(value.monthToDateAPIEquivalentUSD.asCompactCurrency()) API-equivalent / \(value.monthlyMembershipUSD.asCompactCurrency()) monthly = \(String(format: "%.1f×", ratio))")

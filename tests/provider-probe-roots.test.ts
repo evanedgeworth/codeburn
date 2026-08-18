@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { isAbsolute, join } from 'path'
+import { homedir } from 'os'
 
 import { createCodeWhaleProvider } from '../src/providers/codewhale.js'
 import { createHermesProvider } from '../src/providers/hermes.js'
@@ -45,6 +46,7 @@ describe('probeRoots mirrors discovery resolution', () => {
   it('cursor reports the state db path', async () => {
     expect(await createCursorProvider('/tmp/cursor/state.vscdb').probeRoots!()).toEqual([
       { path: '/tmp/cursor/state.vscdb', label: 'db' },
+      { path: join(homedir(), '.config', 'codeburn'), label: 'server exports' },
     ])
   })
 

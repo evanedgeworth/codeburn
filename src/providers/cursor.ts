@@ -16,6 +16,7 @@ import {
   type SqliteDatabase,
 } from '../sqlite.js'
 import { estimateTokensFromChars } from '../token-estimate.js'
+import { getCursorUsageProbeRoot, reconcileCursorCalls } from '../cursor-server-import.js'
 import type { DateRange } from '../types.js'
 import type { ProbeRoot, Provider, SessionSource, SessionParser, ParsedProviderCall } from './types.js'
 
@@ -1028,7 +1029,8 @@ function createParser(
         }
       }
 
-      for (const call of allCalls) {
+      const reconciledCalls = await reconcileCursorCalls(allCalls)
+      for (const call of reconciledCalls) {
         if (composerFilter !== null) {
           const inSet = composerFilter.has(call.sessionId)
           if (filterMode === 'include' && !inSet) continue
@@ -1056,7 +1058,10 @@ export function createCursorProvider(dbPathOverride?: string): Provider {
     },
 
     async probeRoots(): Promise<ProbeRoot[]> {
-      return [{ path: dbPathOverride ?? getCursorDbPath(), label: 'db' }]
+      return [
+        { path: dbPathOverride ?? getCursorDbPath(), label: 'db' },
+        getCursorUsageProbeRoot(),
+      ]
     },
 
     async discoverSessions(): Promise<SessionSource[]> {

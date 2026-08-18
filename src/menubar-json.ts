@@ -42,6 +42,9 @@ export type PeriodData = {
   topReworkedFiles?: ReworkedFile[]
   /// Share (0-1) of cost-bearing calls that resolved a price.
   pricingCoverage?: number
+  /// Cursor-only measurement status. Present when Cursor usage exists locally
+  /// or a server export overlaps the selected period.
+  cursorTracking?: import('./cursor-server-import.js').CursorTrackingCoverage
   /// Spend attributed by referenced pull request (from Claude session
   /// transcripts), at turn granularity. Rows carry attributed cost/calls and ARE
   /// summable; `attributedCost`/`unattributedCost` split the PR-linked spend.
@@ -281,6 +284,7 @@ export type MenubarPayload = {
     /// null when not computable (no scan data on this path) — "unknown" must
     /// never render as 100% coverage.
     pricingCoverage: number | null
+    cursorTracking?: import('./cursor-server-import.js').CursorTrackingCoverage
     retryTax: {
       totalUSD: number
       retries: number
@@ -540,6 +544,7 @@ export function buildMenubarPayload(
       workflow: buildWorkflow(current.workflow),
       topReworkedFiles: buildTopReworkedFiles(current.topReworkedFiles),
       pricingCoverage: current.pricingCoverage ?? null,
+      ...(current.cursorTracking ? { cursorTracking: current.cursorTracking } : {}),
       retryTax: retryTax ?? { totalUSD: 0, retries: 0, editTurns: 0, byModel: [] },
       routingWaste: routingWaste ?? { totalSavingsUSD: 0, baselineModel: '', baselineCostPerEdit: 0, byModel: [] },
       tools: breakdowns?.tools ?? [],

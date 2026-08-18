@@ -65,6 +65,26 @@ describe('buildMenubarPayload', () => {
     expect(payload.current.pullRequests!.rows[0]!.categories).toEqual([{ name: 'Coding', cost: 30 }, { name: 'Debugging', cost: 10 }])
   })
 
+  it('passes Cursor server-measurement coverage through to the menubar', () => {
+    const period: PeriodData = {
+      ...emptyPeriod('Today'),
+      cursorTracking: {
+        source: 'server-export',
+        importedAt: '2026-08-17T18:00:00.000Z',
+        coverageStart: '2026-08-17T08:00:00.000Z',
+        coverageEnd: '2026-08-17T17:59:00.000Z',
+        measuredCostUSD: 12.5,
+        estimatedCostUSD: 1.25,
+        measuredTokens: 9_000_000,
+        estimatedTokens: 1_000_000,
+        measuredPercent: 0.9,
+      },
+    }
+
+    const payload = buildMenubarPayload(period, [], null)
+    expect(payload.current.cursorTracking).toEqual(period.cursorTracking)
+  })
+
   it('exposes period-scoped cache tokens on current, decoupled from the 365-day history backfill (#583)', () => {
     const period: PeriodData = {
       label: '30 Days',

@@ -1978,6 +1978,66 @@ program
   })
 
 program
+  .command('cursor-import [file]')
+  .description('Import a Cursor dashboard usage CSV for server-measured token and cache totals')
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (file?: string, opts?: { format?: string }) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'cursor-import')
+    const {
+      importCursorUsageCsv,
+      readCursorUsageStore,
+      getCursorUsageStorePath,
+    } = await import('./cursor-server-import.js')
+
+    if (!file) {
+      const store = await readCursorUsageStore()
+      const status = {
+        events: store.events.length,
+        importedAt: store.updatedAt || null,
+        coverageStart: store.events[0]?.timestamp ?? null,
+        coverageEnd: store.events.at(-1)?.timestamp ?? null,
+        storePath: getCursorUsageStorePath(),
+      }
+      if (format === 'json') {
+        process.stdout.write(JSON.stringify(status, null, 2) + '\n')
+        return
+      }
+      if (status.events === 0) {
+        process.stdout.write('\n  No Cursor server usage has been imported.\n')
+        process.stdout.write('  Export usage CSV from Cursor Dashboard > Usage, then run:\n')
+        process.stdout.write('  codeburn cursor-import /path/to/usage-events.csv\n\n')
+        return
+      }
+      process.stdout.write(`\n  Cursor server usage: ${status.events.toLocaleString()} events\n`)
+      process.stdout.write(`  Coverage: ${status.coverageStart} to ${status.coverageEnd}\n`)
+      process.stdout.write(`  Last import: ${status.importedAt}\n`)
+      process.stdout.write(`  Store: ${status.storePath}\n\n`)
+      return
+    }
+
+    try {
+      const result = await importCursorUsageCsv(file)
+      clearSessionCache()
+      if (format === 'json') {
+        process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+        return
+      }
+      process.stdout.write(`\n  Imported Cursor usage from ${result.sourceName}\n`)
+      process.stdout.write(`  New events: ${result.importedRows.toLocaleString()}\n`)
+      process.stdout.write(`  Duplicates ignored: ${result.duplicateRows.toLocaleString()}\n`)
+      process.stdout.write(`  Rows skipped: ${result.skippedRows.toLocaleString()}\n`)
+      process.stdout.write(`  Coverage: ${result.coverageStart} to ${result.coverageEnd}\n`)
+      process.stdout.write(`  Store: ${result.storePath}\n`)
+      process.stdout.write('  Cursor totals inside this coverage now use server tokens; local sessions still provide project and tool attribution.\n\n')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      process.stderr.write(`codeburn cursor-import: ${message}\n`)
+      process.exitCode = 1
+    }
+  })
+
+program
   .command('audit')
   .description("Token audit: raw provider token fields vs codeburn's displayed totals and cost derivation")
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all, lifetime', '30days')

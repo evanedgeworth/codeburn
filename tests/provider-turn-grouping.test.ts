@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
+import { createRequire } from 'node:module'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -43,6 +44,70 @@ async function loadParser() {
 }
 
 describe('provider turn grouping', () => {
+  it('preserves Cursor server-export cost through provider and session caches', async () => {
+    const { isSqliteAvailable } = await import('../src/sqlite.js')
+    if (!isSqliteAvailable()) return
+
+    const cursorDir = join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage')
+    await mkdir(cursorDir, { recursive: true })
+    const dbPath = join(cursorDir, 'state.vscdb')
+    const requireForTest = createRequire(import.meta.url)
+    const { DatabaseSync } = requireForTest('node:sqlite') as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void
+        prepare(sql: string): { run(...params: unknown[]): void }
+        close(): void
+      }
+    }
+    const db = new DatabaseSync(dbPath)
+    db.exec('CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value BLOB)')
+    db.exec('CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB)')
+    const composerId = 'server-cost-1111-2222-3333-444444444444'
+    db.prepare('INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)').run(
+      `composerData:${composerId}`,
+      JSON.stringify({ promptTokenBreakdown: { totalUsedTokens: 100 }, createdAt: Date.parse('2026-05-16T10:00:00.000Z') }),
+    )
+    db.prepare('INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)').run(
+      `bubbleId:${composerId}:user-1`,
+      JSON.stringify({ type: 1, createdAt: '2026-05-16T10:00:00.000Z', text: 'implement it', tokenCount: { inputTokens: 0, outputTokens: 0 } }),
+    )
+    db.prepare('INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)').run(
+      `bubbleId:${composerId}:assistant-1`,
+      JSON.stringify({ type: 2, createdAt: '2026-05-16T10:01:00.000Z', text: 'done', modelInfo: { modelName: 'claude-4.6-sonnet' }, tokenCount: { inputTokens: 0, outputTokens: 0 } }),
+    )
+    db.close()
+
+    const csvPath = join(home, 'cursor-usage.csv')
+    await writeFile(csvPath, [
+      'Timestamp,Model,Input Tokens,Output Tokens,Cache Write Tokens,Cache Read Tokens,Cost USD',
+      '2026-05-16T10:01:00.000Z,claude-4.6-sonnet,1000,200,300,4000,7.77',
+    ].join('\n') + '\n')
+    process.env['CODEBURN_CURSOR_USAGE_STORE'] = join(home, '.config', 'codeburn', 'cursor-usage.json')
+
+    try {
+      const parseAllSessions = await loadParser()
+      const localProjects = await parseAllSessions(dayRange(), 'cursor')
+      const localCalls = localProjects.flatMap(project => project.sessions)
+        .flatMap(session => session.turns)
+        .flatMap(turn => turn.assistantCalls)
+      expect(localCalls.every(call => call.isEstimated === true)).toBe(true)
+      expect(localCalls.reduce((sum, call) => sum + call.costUSD, 0)).not.toBeCloseTo(7.77, 2)
+
+      const { importCursorUsageCsv } = await import('../src/cursor-server-import.js')
+      await importCursorUsageCsv(csvPath)
+      clearParserCache?.()
+      const projects = await parseAllSessions(dayRange(), 'cursor')
+      const calls = projects.flatMap(project => project.sessions)
+        .flatMap(session => session.turns)
+        .flatMap(turn => turn.assistantCalls)
+      expect(calls.reduce((sum, call) => sum + call.costUSD, 0)).toBeCloseTo(7.77, 8)
+      expect(calls.reduce((sum, call) => sum + call.usage.cacheReadInputTokens, 0)).toBe(4000)
+      expect(calls.every(call => call.isEstimated !== true)).toBe(true)
+    } finally {
+      delete process.env['CODEBURN_CURSOR_USAGE_STORE']
+    }
+  })
+
   it('groups Gemini assistant messages under their user turn so retries are counted', async () => {
     const chatsDir = join(home, '.gemini', 'tmp', 'project-a', 'chats')
     await mkdir(chatsDir, { recursive: true })

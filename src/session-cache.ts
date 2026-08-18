@@ -5,6 +5,7 @@ import { join } from 'path'
 
 import { getCodeburnCacheDir } from './cache-dir.js'
 import type { ToolCall } from './types.js'
+import { getCursorUsageStoreHash } from './cursor-server-import.js'
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -217,7 +218,7 @@ export const PROVIDER_ENV_VARS: Record<string, string[]> = {
   'lingtai-tui': ['LINGTAI_HOME', 'LINGTAI_TUI_HOME', 'LINGTAI_TUI_GLOBAL_DIR'],
   droid: ['FACTORY_DIR'],
   dsh: ['DSH_HOME'],
-  cursor: ['CODEBURN_CURSOR_MAX_BUBBLES'],
+  cursor: ['CODEBURN_CURSOR_MAX_BUBBLES', 'CODEBURN_CURSOR_USAGE_STORE'],
   // XDG_DATA_HOME is stale here (cursor-agent never reads it) but deliberately
   // kept: removing it would force a re-parse to fix nothing.
   'cursor-agent': ['XDG_DATA_HOME'],
@@ -291,7 +292,10 @@ export const PROVIDER_PARSE_VERSIONS: Record<string, string> = {
   // activeGeneratedTokens/activeDurationMs/toolWaitMs verbatim (cachedCallToApiCall
   // passes them through without recomputing), so this does NOT self-heal either.
   codex: 'mcp-attribution-v5-est-cost-active-timing-mcp-wait-rich-capture-v1-cross-provider-pr-v1-session-meta-model-v1-session-meta-fields-v1-codex-pricing-v1-codex-tps-v1',
-  cursor: 'composer-anchored-crediting-v1-est-cost',
+  // The server-export fingerprint below invalidates this section whenever an
+  // import changes. This one-time bump lands exact exported cost pass-through
+  // and reconciliation on caches written by older builds.
+  cursor: 'composer-anchored-crediting-v1-est-cost-server-export-v1',
   'cursor-agent': 'workspaceless-transcript-v1',
   // source-provenance-v1 (#944): CLI sessions were misread as VS Code
   // transcripts (both carry producer 'copilot-agent'), skipping the shutdown
@@ -473,6 +477,7 @@ export function computeEnvFingerprint(provider: string): string {
   const parts = vars.map(v => `${v}=${process.env[v] ?? ''}`)
   const parseVersion = PROVIDER_PARSE_VERSIONS[provider]
   if (parseVersion) parts.push(`parser=${parseVersion}`)
+  if (provider === 'cursor') parts.push(`serverUsage=${getCursorUsageStoreHash()}`)
   return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 16)
 }
 

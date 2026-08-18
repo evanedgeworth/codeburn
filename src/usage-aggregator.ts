@@ -14,6 +14,7 @@ import { buildPrAttribution, aggregateByBranch } from './sessions-report.js'
 import { scanAndDetect } from './optimize.js'
 import { getDaysInRange, ensureCacheHydrated, emptyCache, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry, type ProjectDayStats, type ProviderDaySlice } from './daily-cache.js'
 import { buildGranularHistory } from './granular-history.js'
+import { buildCursorTrackingCoverage, getCursorUsageStoreHash } from './cursor-server-import.js'
 
 // Row caps for the by-PR / by-branch payload aggregations, ranked by cost.
 const TOP_BRANCHES = 15
@@ -82,8 +83,12 @@ export function buildPeriodData(label: string, projects: ProjectSummary[]): Peri
 export function getDailyCacheConfigHash(): string {
   const savingsHash = getLocalModelSavingsConfigHash()
   const overridesHash = getPriceOverridesConfigHash()
-  if (!overridesHash) return savingsHash
-  return `localModelSavings=${savingsHash}\u0002priceOverrides=${overridesHash}`
+  const cursorUsageHash = getCursorUsageStoreHash()
+  let hash = overridesHash
+    ? `localModelSavings=${savingsHash}\u0002priceOverrides=${overridesHash}`
+    : savingsHash
+  if (cursorUsageHash !== 'none') hash += `\u0002cursorUsage=${cursorUsageHash}`
+  return hash
 }
 
 async function hydrateCache(): Promise<DailyCache> {
@@ -622,6 +627,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
     (sum, r) => sum + (r.provider === 'codex' && r.credits != null ? r.credits : 0),
     0,
   )
+  currentData.cursorTracking = await buildCursorTrackingCoverage(scanProjects, scanRange)
 
   // PROVIDERS
   // For .all: enumerate every provider with cost across the period (from cache) + installed-but-zero.

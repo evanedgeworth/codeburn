@@ -198,6 +198,18 @@ struct ReworkedFileEntry: Codable, Sendable {
     let edits: Int
 }
 
+struct CursorTrackingCoverage: Codable, Sendable {
+    let source: String
+    let importedAt: String?
+    let coverageStart: String?
+    let coverageEnd: String?
+    let measuredCostUSD: Double
+    let estimatedCostUSD: Double
+    let measuredTokens: Int
+    let estimatedTokens: Int
+    let measuredPercent: Double
+}
+
 struct CurrentBlock: Codable, Sendable {
     let label: String
     let cost: Double
@@ -233,6 +245,9 @@ struct CurrentBlock: Codable, Sendable {
     /// only). Optional so payloads from older CLIs still decode; absent or
     /// empty -> the Pull requests section hides.
     var pullRequests: PullRequestsBlock? = nil
+    /// Cursor's measured server-export share versus local estimates. Optional
+    /// for payloads produced before Cursor CSV reconciliation existed.
+    var cursorTracking: CursorTrackingCoverage? = nil
 }
 
 struct PullRequestsBlock: Codable, Sendable {
@@ -252,7 +267,7 @@ extension CurrentBlock {
              cacheHitPercent, codexCredits, topActivities, topModels, localModelSavings, providers, topProjects,
              modelEfficiency, topSessions, retryTax, routingWaste,
              tools, skills, subagents, mcpServers,
-             workflow, topReworkedFiles, pullRequests
+             workflow, topReworkedFiles, pullRequests, cursorTracking
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -281,6 +296,7 @@ extension CurrentBlock {
         workflow = try c.decodeIfPresent(WorkflowBlock.self, forKey: .workflow)
         topReworkedFiles = try c.decodeIfPresent([ReworkedFileEntry].self, forKey: .topReworkedFiles) ?? []
         pullRequests = try c.decodeIfPresent(PullRequestsBlock.self, forKey: .pullRequests)
+        cursorTracking = try c.decodeIfPresent(CursorTrackingCoverage.self, forKey: .cursorTracking)
     }
 }
 

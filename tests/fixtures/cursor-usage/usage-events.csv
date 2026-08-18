@@ -1,0 +1,4 @@
+Timestamp,Model,Kind,Input Tokens,Output Tokens,Cache Write Tokens,Cache Read Tokens,Total Cents
+2026-08-17T10:00:00.000Z,claude-4.6-sonnet,"Included, Ultra",1000,100,200,3000,125
+2026-08-17T10:05:00.000Z,claude-4.6-sonnet,"Included, Ultra",3000,300,400,7000,375
+2026-08-17T11:00:00.000Z,gpt-5.6-sol,Usage-based,500,50,25,750,50

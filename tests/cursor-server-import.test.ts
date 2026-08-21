@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -47,6 +47,27 @@ function localCall(overrides: Partial<ParsedProviderCall>): ParsedProviderCall {
 }
 
 describe('Cursor server usage CSV import', () => {
+  it('falls back to Total Tokens and isolates identical rows by account label', async () => {
+    const fixture = join(root, 'total-only.csv')
+    await writeFile(fixture, [
+      'Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost',
+      '2026-08-20T10:00:00.000Z,On-Demand,cursor-auto,,,,,1234,0.00',
+    ].join('\n'))
+
+    const first = await importCursorUsageCsv(fixture, { account: 'cursor-1' })
+    const repeat = await importCursorUsageCsv(fixture, { account: 'cursor-1' })
+    const second = await importCursorUsageCsv(fixture, { account: 'cursor-2' })
+
+    expect(first).toMatchObject({ account: 'cursor-1', importedRows: 1, skippedRows: 0 })
+    expect(repeat).toMatchObject({ importedRows: 0, duplicateRows: 1 })
+    expect(second).toMatchObject({ account: 'cursor-2', importedRows: 1, totalEvents: 2 })
+    const store = await readCursorUsageStore()
+    expect(store.events.map(event => [event.account, event.inputTokens]).sort()).toEqual([
+      ['cursor-1', 1234],
+      ['cursor-2', 1234],
+    ])
+  })
+
   it('parses quoted rows, cache tokens, cents, and deduplicates overlapping imports', async () => {
     const fixture = join(import.meta.dirname, 'fixtures/cursor-usage/usage-events.csv')
     const first = await importCursorUsageCsv(fixture)

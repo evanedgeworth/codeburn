@@ -458,7 +458,7 @@ Run `codeburn` for the dashboard, or use a subcommand below. Most commands also 
 | `codeburn status --format json` | The same totals as JSON |
 | `codeburn export` | CSV covering today, 7 days, and 30 days |
 | `codeburn export -f json` | Export as JSON instead of CSV |
-| `codeburn cursor-import <csv>` | Reconcile local Cursor sessions with a Cursor dashboard usage export |
+| `codeburn cursor-import <csv> [--account cursor-1]` | Reconcile local Cursor sessions with a Cursor dashboard usage export; use a stable opaque account label for multiple subscriptions |
 
 **Sync (team telemetry)** _preview_
 

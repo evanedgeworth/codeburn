@@ -1980,8 +1980,9 @@ program
 program
   .command('cursor-import [file]')
   .description('Import a Cursor dashboard usage CSV for server-measured token and cache totals')
+  .option('--account <label>', 'Stable opaque account label for safe multi-account deduplication')
   .option('--format <format>', 'Output format: text, json', 'text')
-  .action(async (file?: string, opts?: { format?: string }) => {
+  .action(async (file?: string, opts?: { account?: string; format?: string }) => {
     const format = opts?.format ?? 'text'
     assertFormat(format, ['text', 'json'], 'cursor-import')
     const {
@@ -1994,6 +1995,7 @@ program
       const store = await readCursorUsageStore()
       const status = {
         events: store.events.length,
+        accounts: [...new Set(store.events.map(event => event.account).filter(Boolean))].sort(),
         importedAt: store.updatedAt || null,
         coverageStart: store.events[0]?.timestamp ?? null,
         coverageEnd: store.events.at(-1)?.timestamp ?? null,
@@ -2010,6 +2012,7 @@ program
         return
       }
       process.stdout.write(`\n  Cursor server usage: ${status.events.toLocaleString()} events\n`)
+      if (status.accounts.length > 0) process.stdout.write(`  Accounts: ${status.accounts.join(', ')}\n`)
       process.stdout.write(`  Coverage: ${status.coverageStart} to ${status.coverageEnd}\n`)
       process.stdout.write(`  Last import: ${status.importedAt}\n`)
       process.stdout.write(`  Store: ${status.storePath}\n\n`)
@@ -2017,13 +2020,14 @@ program
     }
 
     try {
-      const result = await importCursorUsageCsv(file)
+      const result = await importCursorUsageCsv(file, { account: opts?.account })
       clearSessionCache()
       if (format === 'json') {
         process.stdout.write(JSON.stringify(result, null, 2) + '\n')
         return
       }
       process.stdout.write(`\n  Imported Cursor usage from ${result.sourceName}\n`)
+      if (result.account) process.stdout.write(`  Account: ${result.account}\n`)
       process.stdout.write(`  New events: ${result.importedRows.toLocaleString()}\n`)
       process.stdout.write(`  Duplicates ignored: ${result.duplicateRows.toLocaleString()}\n`)
       process.stdout.write(`  Rows skipped: ${result.skippedRows.toLocaleString()}\n`)

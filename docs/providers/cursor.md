@@ -36,11 +36,13 @@ The optional server-export store lives at `~/.config/codeburn/cursor-usage.json`
 Cursor does not write output and cache-token billing details into the local database. CodeBurn can reconcile local session attribution with a usage CSV exported from the Cursor dashboard:
 
 ```bash
-codeburn cursor-import ~/Downloads/usage-events.csv
+codeburn cursor-import ~/Downloads/usage-events.csv --account cursor-1
 codeburn cursor-import                  # show current import status
 ```
 
-The importer requires date or timestamp and model columns, plus at least one token or cost column. It accepts common header variants for input, output, cache-read, cache-write, total cost, and total cents. Quoted CSV cells are supported.
+The importer requires date or timestamp and model columns, plus at least one token or cost column. It accepts common header variants for input, output, cache-read, cache-write, total tokens, total cost, and total cents. When Cursor provides only `Total Tokens`, CodeBurn preserves that aggregate in the input column instead of dropping the row. Quoted CSV cells are supported.
+
+Use a stable opaque `--account` label when importing more than one Cursor subscription. It namespaces deduplication across accounts while keeping repeated or overlapping exports for the same account safe. Labels are stored locally; do not use an email address.
 
 Reconciliation rules:
 
@@ -48,7 +50,7 @@ Reconciliation rules:
 - Matching local calls retain their project, session, tool, and shell-command attribution. Server token and cost totals are distributed across those calls without changing the aggregate.
 - Server rows with no matching local call are emitted once under the orphan Cursor project so usage is not lost.
 - Local calls after the latest imported event remain estimated until a later export is imported.
-- Overlapping exports are safe to import repeatedly. Stable row identities deduplicate them.
+- Overlapping exports are safe to import repeatedly. Stable row identities deduplicate them within the same account label.
 - The normalized store contains usage fields, timestamps, model names, and the optional usage kind. It does not copy prompts, generated text, account email, or browser credentials. The file is written privately with mode `0600`.
 
 The menubar reports the share of Cursor tokens that is server-measured and labels the remainder locally estimated. CodeBurn does not scrape browser cookies or Cursor's private APIs. Individual subscriptions use the CSV path; a future team-admin connector can use the same reconciliation layer without changing local attribution.

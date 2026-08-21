@@ -13,6 +13,7 @@ const STORE_FILE = 'cursor-usage.json'
 
 export type CursorServerUsageEvent = {
   id: string
+  account?: string
   timestamp: string
   model: string
   inputTokens: number
@@ -25,6 +26,7 @@ export type CursorServerUsageEvent = {
 
 type CursorImportReceipt = {
   sourceName: string
+  account?: string
   importedAt: string
   rows: number
 }
@@ -38,6 +40,7 @@ export type CursorUsageStore = {
 
 export type CursorImportResult = {
   sourceName: string
+  account: string | null
   parsedRows: number
   importedRows: number
   duplicateRows: number
@@ -102,6 +105,7 @@ function isStoredEvent(value: unknown): value is CursorServerUsageEvent {
   if (!value || typeof value !== 'object') return false
   const event = value as Record<string, unknown>
   return typeof event.id === 'string'
+    && (event.account === undefined || typeof event.account === 'string')
     && typeof event.timestamp === 'string'
     && typeof event.model === 'string'
     && ['inputTokens', 'outputTokens', 'cacheWriteTokens', 'cacheReadTokens', 'costUSD']
@@ -112,6 +116,7 @@ function isImportReceipt(value: unknown): value is CursorImportReceipt {
   if (!value || typeof value !== 'object') return false
   const receipt = value as Record<string, unknown>
   return typeof receipt.sourceName === 'string'
+    && (receipt.account === undefined || typeof receipt.account === 'string')
     && typeof receipt.importedAt === 'string'
     && typeof receipt.rows === 'number'
 }
@@ -209,6 +214,7 @@ function normalizeCursorModel(model: string): string {
 
 function eventId(event: Omit<CursorServerUsageEvent, 'id'>, occurrence: number): string {
   const stable = [
+    event.account ?? '',
     event.timestamp,
     normalizeCursorModel(event.model),
     event.inputTokens,
@@ -222,7 +228,7 @@ function eventId(event: Omit<CursorServerUsageEvent, 'id'>, occurrence: number):
   return createHash('sha256').update(stable).digest('hex').slice(0, 24)
 }
 
-function parseCursorCsv(raw: string): { events: CursorServerUsageEvent[]; parsedRows: number; skippedRows: number } {
+function parseCursorCsv(raw: string, account?: string): { events: CursorServerUsageEvent[]; parsedRows: number; skippedRows: number } {
   const rows = parseCsv(raw)
   if (rows.length === 0) throw new Error('CSV is empty')
   const headers = rows[0]!
@@ -232,6 +238,7 @@ function parseCursorCsv(raw: string): { events: CursorServerUsageEvent[]; parsed
   const outputCol = findColumn(headers, ['outputtokens', 'outputtoken', 'output'])
   const cacheWriteCol = findColumn(headers, ['cachewritetokens', 'cachecreationtokens', 'cachecreatetokens', 'cachewrite', 'inputwcachewrite', 'inputwithcachewrite'])
   const cacheReadCol = findColumn(headers, ['cachereadtokens', 'cachedinputtokens', 'cacheread'])
+  const totalTokensCol = findColumn(headers, ['totaltokens', 'total'])
   const totalCentsCol = findColumn(headers, ['totalcents'])
   const costCol = findColumn(headers, ['costusd', 'totalcostusd', 'totalcost', 'cost', 'amountusd', 'apicost'])
   const kindCol = findColumn(headers, ['kind', 'usagetype', 'type'])
@@ -239,7 +246,7 @@ function parseCursorCsv(raw: string): { events: CursorServerUsageEvent[]; parsed
   if (timestampCol < 0 || modelCol < 0) {
     throw new Error(`Cursor usage CSV needs timestamp/date and model columns; found: ${headers.join(', ')}`)
   }
-  if ([inputCol, outputCol, cacheWriteCol, cacheReadCol, totalCentsCol, costCol].every(index => index < 0)) {
+  if ([inputCol, outputCol, cacheWriteCol, cacheReadCol, totalTokensCol, totalCentsCol, costCol].every(index => index < 0)) {
     throw new Error('Cursor usage CSV has no token or cost columns')
   }
 
@@ -253,10 +260,12 @@ function parseCursorCsv(raw: string): { events: CursorServerUsageEvent[]; parsed
       skippedRows += 1
       continue
     }
-    const inputTokens = parseNonNegative(row[inputCol])
+    let inputTokens = parseNonNegative(row[inputCol])
     const outputTokens = parseNonNegative(row[outputCol])
     const cacheWriteTokens = parseNonNegative(row[cacheWriteCol])
     const cacheReadTokens = parseNonNegative(row[cacheReadCol])
+    const detailedTokens = inputTokens + outputTokens + cacheWriteTokens + cacheReadTokens
+    if (detailedTokens === 0) inputTokens = parseNonNegative(row[totalTokensCol])
     const explicitCost = totalCentsCol >= 0
       ? parseNonNegative(row[totalCentsCol]) / 100
       : parseNonNegative(row[costCol])
@@ -268,6 +277,7 @@ function parseCursorCsv(raw: string): { events: CursorServerUsageEvent[]; parsed
       continue
     }
     const withoutId = {
+      ...(account ? { account } : {}),
       timestamp,
       model,
       inputTokens,
@@ -285,9 +295,10 @@ function parseCursorCsv(raw: string): { events: CursorServerUsageEvent[]; parsed
   return { events, parsedRows: Math.max(0, rows.length - 1), skippedRows }
 }
 
-export async function importCursorUsageCsv(filePath: string): Promise<CursorImportResult> {
+export async function importCursorUsageCsv(filePath: string, options?: { account?: string }): Promise<CursorImportResult> {
   const raw = await readFile(filePath, 'utf8')
-  const parsed = parseCursorCsv(raw)
+  const account = options?.account?.trim() || undefined
+  const parsed = parseCursorCsv(raw, account)
   const current = await readCursorUsageStore()
   const byId = new Map(current.events.map(event => [event.id, event]))
   let duplicateRows = 0
@@ -298,10 +309,16 @@ export async function importCursorUsageCsv(filePath: string): Promise<CursorImpo
   const importedAt = new Date().toISOString()
   const events = [...byId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id))
   const sourceName = basename(filePath)
-  const imports = [...current.imports, { sourceName, importedAt, rows: parsed.events.length }].slice(-50)
+  const imports = [...current.imports, {
+    sourceName,
+    ...(account ? { account } : {}),
+    importedAt,
+    rows: parsed.events.length,
+  }].slice(-50)
   await saveCursorUsageStore({ version: STORE_VERSION, updatedAt: importedAt, events, imports })
   return {
     sourceName,
+    account: account ?? null,
     parsedRows: parsed.parsedRows,
     importedRows: parsed.events.length - duplicateRows,
     duplicateRows,

@@ -55,6 +55,28 @@ and prices every cache write at the 5-minute rate.
 
 None at the provider level. The daily aggregation cache (`src/daily-cache.ts`) reuses prior computed days.
 
+## Recovering pruned historical totals
+
+Claude Code's `stats-cache.json` can retain exact cumulative input, output,
+cache-read, and cache-write totals after the underlying JSONL transcripts have
+been pruned. Import that snapshot before it is replaced:
+
+```bash
+codeburn claude-history-import ~/.claude/stats-cache.json
+```
+
+The import is copied to `~/.config/codeburn/claude-history.json`. CodeBurn
+requires Claude's per-model daily uncached series to reconcile exactly with the
+cumulative model totals, then adds the historical totals to normal Claude
+reports. Aggregate components are exact. Claude does not retain daily
+cache-read/cache-write splits in this file, so CodeBurn allocates those
+components across the exact activity days proportionally and marks their cost
+as estimated.
+
+To prevent double counting, a historical day is excluded in full when a live
+Claude transcript exists on that same local day. Inspect the current import
+with `codeburn claude-history-import`.
+
 ## Quirks
 
 - The parser is in `src/parser.ts`, not in `src/providers/claude.ts`. Anything that changes Claude parsing belongs in `parser.ts`.

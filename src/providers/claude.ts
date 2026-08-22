@@ -7,6 +7,7 @@ import { createHash } from 'crypto'
 import type { Provider, ProbeRoot, SessionSource, SessionParser } from './types.js'
 import { getShortModelName } from '../models.js'
 import { readConfig } from '../config.js'
+import { getClaudeHistoryProbeRoot } from '../claude-history-import.js'
 
 export type ClaudeConfigSource = {
   id: string
@@ -280,6 +281,7 @@ export const claude: Provider = {
     const dirs = await getClaudeConfigDirs()
     const roots: ProbeRoot[] = dirs.map(dir => ({ path: join(dir, 'projects'), label: 'projects' }))
     roots.push(...getDesktopSessionsDirs().map(path => ({ path, label: 'desktop' })))
+    roots.push(getClaudeHistoryProbeRoot())
     return roots
   },
 

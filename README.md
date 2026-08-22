@@ -459,6 +459,7 @@ Run `codeburn` for the dashboard, or use a subcommand below. Most commands also 
 | `codeburn export` | CSV covering today, 7 days, and 30 days |
 | `codeburn export -f json` | Export as JSON instead of CSV |
 | `codeburn cursor-import <csv> [--account cursor-1]` | Reconcile local Cursor sessions with a Cursor dashboard usage export; use a stable opaque account label for multiple subscriptions |
+| `codeburn claude-history-import [stats-cache.json]` | Recover exact aggregate Claude token components after source transcripts were pruned; daily cache allocation is labeled estimated |
 
 **Sync (team telemetry)** _preview_
 

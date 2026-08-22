@@ -178,7 +178,7 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[], dateKeyFn:
           callDay.savingsUSD += callSavings
           callDay.calls += 1
           callDay.inputTokens += call.usage.inputTokens
-          callDay.outputTokens += call.usage.outputTokens
+          callDay.outputTokens += call.usage.outputTokens + call.usage.reasoningTokens
           callDay.cacheReadTokens += call.usage.cacheReadInputTokens
           callDay.cacheWriteTokens += call.usage.cacheCreationInputTokens
 
@@ -196,7 +196,7 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[], dateKeyFn:
           model.cost += call.costUSD
           model.savingsUSD += callSavings
           model.inputTokens += call.usage.inputTokens
-          model.outputTokens += call.usage.outputTokens
+          model.outputTokens += call.usage.outputTokens + call.usage.reasoningTokens
           model.cacheReadTokens += call.usage.cacheReadInputTokens
           model.cacheWriteTokens += call.usage.cacheCreationInputTokens
           callDay.models[call.model] = model
@@ -206,7 +206,7 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[], dateKeyFn:
           slice.cost += call.costUSD
           slice.savingsUSD += callSavings
           slice.inputTokens! += call.usage.inputTokens
-          slice.outputTokens! += call.usage.outputTokens
+          slice.outputTokens! += call.usage.outputTokens + call.usage.reasoningTokens
           slice.cacheReadTokens! += call.usage.cacheReadInputTokens
           slice.cacheWriteTokens! += call.usage.cacheCreationInputTokens
 
@@ -224,7 +224,7 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[], dateKeyFn:
           sliceModel.cost += call.costUSD
           sliceModel.savingsUSD += callSavings
           sliceModel.inputTokens += call.usage.inputTokens
-          sliceModel.outputTokens += call.usage.outputTokens
+          sliceModel.outputTokens += call.usage.outputTokens + call.usage.reasoningTokens
           sliceModel.cacheReadTokens += call.usage.cacheReadInputTokens
           sliceModel.cacheWriteTokens += call.usage.cacheCreationInputTokens
           slice.models![call.model] = sliceModel

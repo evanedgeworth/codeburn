@@ -54,6 +54,7 @@ import type {
 import { classifyTurn, BASH_TOOLS, EDIT_TOOLS } from './classifier.js'
 import { extractBashCommands } from './bash-utils.js'
 import { getCursorUsageStoreHash } from './cursor-server-import.js'
+import { buildClaudeHistoricalCalls, getClaudeHistoryStoreHash } from './claude-history-import.js'
 
 function unsanitizePath(dirName: string): string {
   return dirName.replace(/-/g, '/')
@@ -3507,7 +3508,7 @@ function cacheKey(dateRange: DateRange | undefined, providerFilter: string | und
   // Pricing-affecting config participates so a memoized parse (exact-key or
   // burst-reused in a resident serve process) can never present costs priced
   // under aliases/overrides/savings the user has since changed.
-  return `${s}:${providerFilter ?? 'all'}:${claudeRoots}:${getProxyPathsConfigHash()}:${getModelAliasesConfigHash()}:${getPriceOverridesConfigHash()}:${getLocalModelSavingsConfigHash()}:cursorUsage=${getCursorUsageStoreHash()}`
+  return `${s}:${providerFilter ?? 'all'}:${claudeRoots}:${getProxyPathsConfigHash()}:${getModelAliasesConfigHash()}:${getPriceOverridesConfigHash()}:${getLocalModelSavingsConfigHash()}:cursorUsage=${getCursorUsageStoreHash()}:claudeHistory=${getClaudeHistoryStoreHash()}`
 }
 
 export function clearSessionCache(): void {
@@ -4143,6 +4144,46 @@ async function runParse(
       if (!isPermissionError(err)) throw err
       process.stderr.write(`codeburn: skipped claude data (permission denied; grant Full Disk Access to include it)\n`)
       emitScanProgress({ kind: 'provider', provider: 'claude', state: 'skipped' })
+    }
+  }
+
+  // Claude's stats-cache can outlive pruned transcripts and contains exact
+  // cumulative input/output/cache totals. Imported snapshots are represented as
+  // synthetic day/model calls so normal reports can include those tokens. If a
+  // live transcript exists on the same local day, exclude the historical day in
+  // full: double-counting would be worse than the explicitly reported gap.
+  if (claudeInScope) {
+    const liveClaudeDays = new Set<string>()
+    for (const project of claudeProjects) {
+      for (const session of project.sessions) {
+        for (const turn of session.turns) {
+          if (turn.assistantCalls.some(call => call.provider === 'claude')) liveClaudeDays.add(dateKey(turn.timestamp))
+        }
+      }
+    }
+    const historical = await buildClaudeHistoricalCalls(dateRange, liveClaudeDays)
+    if (historical.calls.length > 0) {
+      const project = historical.calls[0]!.project ?? 'Claude historical aggregate'
+      const projectPath = historical.calls[0]!.projectPath ?? '.claude'
+      const callsByDay = new Map<string, ParsedProviderCall[]>()
+      for (const call of historical.calls) {
+        const day = dateKey(call.timestamp)
+        const existing = callsByDay.get(day) ?? []
+        existing.push(call)
+        callsByDay.set(day, existing)
+      }
+      const sessions = [...callsByDay.entries()].map(([day, calls]) => buildSessionSummary(
+        `claude-history:${day}`,
+        project,
+        calls.map(call => classifyTurn(providerCallToTurn(call))),
+      ))
+      claudeProjects.push(summarizeProject(project, projectPath, sessions))
+    }
+    if (historical.excludedOverlapDays.length > 0) {
+      process.stderr.write(
+        `codeburn: excluded ${historical.excludedOverlapTokens.toLocaleString()} imported Claude tokens on ` +
+        `${historical.excludedOverlapDays.length} day(s) that also contain live transcripts\n`,
+      )
     }
   }
 

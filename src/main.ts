@@ -1978,6 +1978,74 @@ program
   })
 
 program
+  .command('claude-history-import [file]')
+  .description('Import Claude stats-cache history whose token-bearing transcripts are no longer available')
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (file?: string, opts?: { format?: string }) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'claude-history-import')
+    const {
+      importClaudeStatsCache,
+      readClaudeHistoryStore,
+      getClaudeHistoryStorePath,
+      totalStoreTokens,
+    } = await import('./claude-history-import.js')
+
+    if (!file) {
+      const store = await readClaudeHistoryStore()
+      const status = store ? {
+        importedAt: store.importedAt,
+        sourceName: store.sourceName,
+        firstSessionDate: store.firstSessionDate,
+        lastComputedDate: store.lastComputedDate,
+        totalSessions: store.totalSessions,
+        totalMessages: store.totalMessages,
+        days: store.dailyModelTokens.length,
+        models: Object.keys(store.modelUsage).length,
+        totalTokens: totalStoreTokens(store),
+        storePath: getClaudeHistoryStorePath(),
+      } : null
+      if (format === 'json') {
+        process.stdout.write(JSON.stringify(status, null, 2) + '\n')
+        return
+      }
+      if (!status) {
+        process.stdout.write('\n  No Claude historical stats have been imported.\n')
+        process.stdout.write('  Run: codeburn claude-history-import ~/.claude/stats-cache.json\n\n')
+        return
+      }
+      process.stdout.write(`\n  Claude historical tokens: ${status.totalTokens.toLocaleString()}\n`)
+      process.stdout.write(`  Coverage: ${status.firstSessionDate} to ${status.lastComputedDate}\n`)
+      process.stdout.write(`  Source metadata: ${status.totalSessions.toLocaleString()} sessions, ${status.totalMessages.toLocaleString()} messages\n`)
+      process.stdout.write(`  Models/days: ${status.models} / ${status.days}\n`)
+      process.stdout.write(`  Imported: ${status.importedAt}\n`)
+      process.stdout.write(`  Store: ${status.storePath}\n`)
+      process.stdout.write('  Aggregate token components are exact; cache tokens are allocated across days proportionally and marked estimated.\n\n')
+      return
+    }
+
+    try {
+      const result = await importClaudeStatsCache(file)
+      clearSessionCache()
+      if (format === 'json') {
+        process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+        return
+      }
+      process.stdout.write(`\n  Imported Claude historical stats from ${result.sourceName}\n`)
+      process.stdout.write(`  Exact aggregate tokens: ${result.totalTokens.toLocaleString()}\n`)
+      process.stdout.write(`  Coverage: ${result.firstSessionDate} to ${result.lastComputedDate}\n`)
+      process.stdout.write(`  Source metadata: ${result.totalSessions.toLocaleString()} sessions, ${result.totalMessages.toLocaleString()} messages\n`)
+      process.stdout.write(`  Models/days: ${result.models} / ${result.days}\n`)
+      process.stdout.write(`  Store: ${result.storePath}\n`)
+      process.stdout.write('  Exact model totals are preserved. Day-level cache allocation is inferred and labeled estimated.\n\n')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      process.stderr.write(`codeburn claude-history-import: ${message}\n`)
+      process.exitCode = 1
+    }
+  })
+
+program
   .command('cursor-import [file]')
   .description('Import a Cursor dashboard usage CSV for server-measured token and cache totals')
   .option('--account <label>', 'Stable opaque account label for safe multi-account deduplication')

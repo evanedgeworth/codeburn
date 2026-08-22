@@ -15,6 +15,7 @@ import { scanAndDetect } from './optimize.js'
 import { getDaysInRange, ensureCacheHydrated, emptyCache, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry, type ProjectDayStats, type ProviderDaySlice } from './daily-cache.js'
 import { buildGranularHistory } from './granular-history.js'
 import { buildCursorTrackingCoverage, getCursorUsageStoreHash } from './cursor-server-import.js'
+import { getClaudeHistoryStoreHash } from './claude-history-import.js'
 
 // Row caps for the by-PR / by-branch payload aggregations, ranked by cost.
 const TOP_BRANCHES = 15
@@ -27,7 +28,10 @@ export function buildPeriodData(label: string, projects: ProjectSummary[]): Peri
 
   for (const sess of sessions) {
     inputTokens += sess.totalInputTokens
-    outputTokens += sess.totalOutputTokens
+    // Reasoning tokens are provider-billed output tokens (Codex exposes them as
+    // a separate detail field). Fold them into the user-facing output total so
+    // the menubar matches audit/model reports and actual provider token usage.
+    outputTokens += sess.totalOutputTokens + sess.totalReasoningTokens
     cacheReadTokens += sess.totalCacheReadTokens
     cacheWriteTokens += sess.totalCacheWriteTokens
     for (const [cat, d] of Object.entries(sess.categoryBreakdown)) {
@@ -44,7 +48,7 @@ export function buildPeriodData(label: string, projects: ProjectSummary[]): Peri
       modelTotals[model].cost += d.costUSD
       modelTotals[model].savingsUSD += d.savingsUSD
       modelTotals[model].estimatedCostUSD += d.estimatedCostUSD ?? 0
-      modelTotals[model].tokens += d.tokens.inputTokens + d.tokens.outputTokens + d.tokens.cacheReadInputTokens + d.tokens.cacheCreationInputTokens
+      modelTotals[model].tokens += d.tokens.inputTokens + d.tokens.outputTokens + d.tokens.reasoningTokens + d.tokens.cacheReadInputTokens + d.tokens.cacheCreationInputTokens
     }
   }
 
@@ -84,10 +88,12 @@ export function getDailyCacheConfigHash(): string {
   const savingsHash = getLocalModelSavingsConfigHash()
   const overridesHash = getPriceOverridesConfigHash()
   const cursorUsageHash = getCursorUsageStoreHash()
+  const claudeHistoryHash = getClaudeHistoryStoreHash()
   let hash = overridesHash
     ? `localModelSavings=${savingsHash}\u0002priceOverrides=${overridesHash}`
     : savingsHash
   if (cursorUsageHash !== 'none') hash += `\u0002cursorUsage=${cursorUsageHash}`
+  if (claudeHistoryHash !== 'none') hash += `\u0002claudeHistory=${claudeHistoryHash}`
   return hash
 }
 

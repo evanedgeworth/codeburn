@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays, dateKey } from '../src/day-aggregator.js'
+import { buildPeriodData } from '../src/usage-aggregator.js'
 import type { ProjectSummary } from '../src/types.js'
 
 function makeProject(overrides: Partial<ProjectSummary> & { sessions: ProjectSummary['sessions'] }): ProjectSummary {
@@ -74,6 +75,18 @@ function makeSingleTurnProject(
 }
 
 describe('aggregateProjectsIntoDays', () => {
+  it('folds provider reasoning detail into user-facing output token totals', () => {
+    const call = makeCall('2026-04-09T10:00:00', 1, 'gpt-5.6-sol', 'codex')
+    call.usage.reasoningTokens = 25
+    const project = makeSingleTurnProject([call])
+    project.sessions[0]!.totalReasoningTokens = 25
+
+    const days = aggregateProjectsIntoDays([project])
+    expect(days[0]!.outputTokens).toBe(225)
+    expect(days[0]!.providers.codex!.outputTokens).toBe(225)
+    expect(buildPeriodData('range', [project]).outputTokens).toBe(225)
+  })
+
   it("buckets call-derived values under each call's own date when a turn straddles midnight", () => {
     // Per-call bucketing (issue #852): a turn whose calls straddle midnight
     // puts each call's cost/calls/tokens on the day the call happened, so

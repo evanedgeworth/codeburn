@@ -4,6 +4,10 @@ import { PLAN_PROVIDERS } from './plans.js'
 import type { DateRange, ProjectSummary } from './types.js'
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
+const PLAN_NEAR_THRESHOLD_PCT = 80
+
+export type PlanStatus = 'under' | 'near' | 'over'
+
 export type PlanUsage = {
   plan: Plan
   periodStart: Date
@@ -11,6 +15,7 @@ export type PlanUsage = {
   spentApiEquivalentUsd: number
   budgetUsd: number
   percentUsed: number
+  status: PlanStatus
   projectedMonthUsd: number
   daysUntilReset: number
 }
@@ -107,6 +112,7 @@ export function getPlanUsageFromProjects(plan: Plan, projects: ProjectSummary[],
   const spent = projects.reduce((sum, p) => sum + p.totalCostUSD, 0)
   const budgetUsd = plan.monthlyUsd
   const percentUsed = budgetUsd > 0 ? (spent / budgetUsd) * 100 : 0
+  const status: PlanStatus = percentUsed > 100 ? 'over' : percentUsed >= PLAN_NEAR_THRESHOLD_PCT ? 'near' : 'under'
   const projectedMonthUsd = projectMonthEnd(projects, periodStart, periodEnd, today, spent)
   const daysUntilReset = Math.max(0, diffCalendarDays(today, periodEnd))
 
@@ -117,6 +123,7 @@ export function getPlanUsageFromProjects(plan: Plan, projects: ProjectSummary[],
     spentApiEquivalentUsd: spent,
     budgetUsd,
     percentUsed,
+    status,
     projectedMonthUsd,
     daysUntilReset,
   }

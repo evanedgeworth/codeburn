@@ -47,7 +47,7 @@ Types to mirror verbatim into `app/renderer/lib/types.ts` (copy from the cited f
 - `MenubarPayload`, `DailyHistoryEntry`, `DailyModelBreakdown`, `CombinedUsage`, `DeviceSummary` — `src/menubar-json.ts`.
 - `ModelReportRow` — `src/models-report.ts:9`.
 - `YieldJsonReport` — `src/yield.ts:247`.
-- `PlanUsage` — `src/plan-usage.ts` (only the fields the Plans section renders: `plan, periodStart, periodEnd, spentApiEquivalentUsd, budgetUsd, percentUsed, projectedMonthUsd, daysUntilReset`).
+- `PlanUsage` — `src/plan-usage.ts` (only the fields the Plans section renders: `plan, periodStart, periodEnd, spentApiEquivalentUsd, budgetUsd, percentUsed, status, projectedMonthUsd, daysUntilReset`).
 - `SpendFlow`, `ShareStatus`, `Identity`, scan entry — defined by T1a/T1b below.
 
 ### IPC surface (preload `contextBridge`)

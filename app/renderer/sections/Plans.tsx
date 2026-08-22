@@ -130,7 +130,7 @@ function renderBudgetPlans(data: StatusJson | null, error: ReturnType<typeof use
   if (!data && error) {
     return (
       <section className="budget-plans">
-        <h2 className="plans-section-heading">Membership value</h2>
+        <h2 className="plans-section-heading">Budget plans</h2>
         <CliErrorPanel error={error} subject="plan pacing" />
       </section>
     )
@@ -139,7 +139,7 @@ function renderBudgetPlans(data: StatusJson | null, error: ReturnType<typeof use
 
   return (
     <section className="budget-plans">
-      <h2 className="plans-section-heading">Membership value</h2>
+      <h2 className="plans-section-heading">Budget plans</h2>
       {plans.map(plan => <PlanPanel key={`${plan.provider}-${plan.id}`} plan={plan} />)}
     </section>
   )
@@ -225,11 +225,15 @@ function formatResetTime(resetsAt: string | null): string | null {
 function PlanPanel({ plan }: { plan: JsonPlanSummary }) {
   const hasBudget = plan.budget > 0
   const displayPercent = Math.min(100, Math.max(0, plan.percentUsed))
-  const trackClass = hasBudget ? undefined : 'mut'
+  const over = plan.status === 'over' || plan.percentUsed > 100
+  const trackClass = hasBudget ? (over ? 'over' : undefined) : 'mut'
+  const overage = Math.max(0, plan.spent - plan.budget)
   const right = hasBudget
-    ? `${formatConverted(plan.spent)} API-equivalent · ${fmtPct(plan.percentUsed)} of plan price`
+    ? `${formatConverted(plan.spent)} · ${fmtPct(plan.percentUsed)}${overage > 0 ? ` · ${formatConverted(overage)} over` : ''}`
     : `${formatConverted(plan.spent)} this cycle`
-  const detail = hasBudget ? `${formatConverted(plan.budget)} / month membership · ${plan.provider}` : `${plan.provider} · pay as you go, no plan`
+  const detail = hasBudget
+    ? `${formatConverted(plan.budget)} / month budget · API-equivalent, not a live provider window · ${plan.provider}`
+    : `${plan.provider} · pay as you go, no plan`
 
   return (
     <Panel>
@@ -249,5 +253,19 @@ function PlanPanel({ plan }: { plan: JsonPlanSummary }) {
 function PaceLine({ plan }: { plan: JsonPlanSummary }) {
   const end = cycleEndDate(plan)
   const endLabel = end ? formatShortDate(end) : 'unknown'
-  return <div className="pace">Projected API-equivalent value: {formatConverted(plan.projectedMonthEnd)} by {endLabel}. Not billable cost.</div>
+  if (plan.status === 'over' || plan.projectedMonthEnd > plan.budget) {
+    return (
+      <div className="pace hot">
+        On pace to exceed; projected {formatConverted(plan.projectedMonthEnd)} by {endLabel}
+      </div>
+    )
+  }
+  if (plan.status === 'near') {
+    return (
+      <div className="pace hot">
+        {fmtPct(plan.percentUsed)} of budget used; projected {formatConverted(plan.projectedMonthEnd)} by {endLabel}
+      </div>
+    )
+  }
+  return <div className="pace ok">On track</div>
 }

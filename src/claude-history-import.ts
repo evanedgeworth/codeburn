@@ -82,7 +82,7 @@ export function getClaudeHistoryStorePath(): string {
 }
 
 export function getClaudeHistoryProbeRoot(): ProbeRoot {
-  return { path: dirname(getClaudeHistoryStorePath()), label: 'historical stats' }
+  return { path: getClaudeHistoryStorePath(), label: 'historical stats' }
 }
 
 export function getClaudeHistoryStoreHash(): string {

@@ -75,7 +75,7 @@ export function getCursorUsageStorePath(): string {
 }
 
 export function getCursorUsageProbeRoot(): ProbeRoot {
-  return { path: dirname(getCursorUsageStorePath()), label: 'server exports' }
+  return { path: getCursorUsageStorePath(), label: 'server exports' }
 }
 
 export function getCursorUsageStoreHash(): string {

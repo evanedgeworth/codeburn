@@ -46,7 +46,7 @@ describe('probeRoots mirrors discovery resolution', () => {
   it('cursor reports the state db path', async () => {
     expect(await createCursorProvider('/tmp/cursor/state.vscdb').probeRoots!()).toEqual([
       { path: '/tmp/cursor/state.vscdb', label: 'db' },
-      { path: join(homedir(), '.config', 'codeburn'), label: 'server exports' },
+      { path: join(homedir(), '.config', 'codeburn', 'cursor-usage.json'), label: 'server exports' },
     ])
   })
 

@@ -24,6 +24,7 @@ const claudePlan: JsonPlanSummary = {
   budget: 200,
   spent: 230,
   percentUsed: 115,
+  status: 'over',
   projectedMonthEnd: 254,
   daysUntilReset: 4,
   periodStart,
@@ -36,6 +37,7 @@ const cursorPlan: JsonPlanSummary = {
   budget: 20,
   spent: 8.2,
   percentUsed: 41,
+  status: 'under',
   projectedMonthEnd: 12.4,
   daysUntilReset: 4,
   periodStart,
@@ -48,6 +50,7 @@ const codexPlan: JsonPlanSummary = {
   budget: 0,
   spent: 31.02,
   percentUsed: 15,
+  status: 'under',
   projectedMonthEnd: 31.02,
   daysUntilReset: 4,
   periodStart,
@@ -114,19 +117,19 @@ describe('Plans', () => {
     expect(container.querySelector('[data-testid="quota-track-Weekly"] i')).toHaveClass('bad')
     expect(screen.getByText('Not connected. Log in with the Codex CLI.')).toBeInTheDocument()
 
-    expect(screen.getByRole('heading', { name: 'Membership value' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Budget plans' })).toBeInTheDocument()
     expect(screen.getByText('Cursor Pro')).toBeInTheDocument()
-    expect(screen.getByText('$20.00 / month membership · cursor')).toBeInTheDocument()
-    expect(screen.getByText('$8.20 API-equivalent · 41% of plan price')).toBeInTheDocument()
+    expect(screen.getByText('$20.00 / month budget · API-equivalent, not a live provider window · cursor')).toBeInTheDocument()
+    expect(screen.getByText('$8.20 · 41%')).toBeInTheDocument()
     const cursorFill = container.querySelector('[data-testid="plan-track-cursor"] i')
     expect(cursorFill).toHaveStyle({ width: '41%' })
     expect(cursorFill).not.toHaveClass('over')
-    expect(screen.getByText('Projected API-equivalent value: $12.40 by Jul 14. Not billable cost.')).toHaveClass('pace')
+    expect(screen.getByText('On track')).toHaveClass('pace', 'ok')
     expect(screen.queryByText('Claude Max')).not.toBeInTheDocument()
     expect(screen.queryByText('API usage')).not.toBeInTheDocument()
   })
 
-  it('shows high membership value without presenting it as an overage', async () => {
+  it('keeps manual budget overage and clamped-track behavior', async () => {
     getPlans.mockResolvedValue({
       ...baseStatus,
       plans: {
@@ -137,14 +140,14 @@ describe('Plans', () => {
     const { container } = render(<Plans period="30days" />)
 
     expect(await screen.findByText('SuperGrok')).toBeInTheDocument()
-    expect(screen.getByText('$230.00 API-equivalent · 115% of plan price')).toBeInTheDocument()
+    expect(screen.getByText('$230.00 · 115% · $30.00 over')).toBeInTheDocument()
     const fill = container.querySelector('[data-testid="plan-track-grok"] i')
     expect(fill).toHaveStyle({ width: '100%' })
-    expect(fill).not.toHaveClass('over')
-    expect(screen.getByText('Projected API-equivalent value: $254.00 by Jul 14. Not billable cost.')).toHaveClass('pace')
+    expect(fill).toHaveClass('over')
+    expect(screen.getByText('On pace to exceed; projected $254.00 by Jul 14')).toHaveClass('pace', 'hot')
   })
 
-  it('renders projected membership value without an amber warning state', async () => {
+  it('renders near status as an amber non-exceeding projection when below budget', async () => {
     getPlans.mockResolvedValue({
       ...baseStatus,
       plans: {
@@ -154,6 +157,7 @@ describe('Plans', () => {
           budget: 300,
           spent: 255,
           percentUsed: 85,
+          status: 'near',
           projectedMonthEnd: 280,
           daysUntilReset: 4,
           periodStart,
@@ -164,9 +168,9 @@ describe('Plans', () => {
 
     render(<Plans period="30days" />)
 
-    const pace = await screen.findByText('Projected API-equivalent value: $280.00 by Jul 14. Not billable cost.')
-    expect(pace).toHaveClass('pace')
-    expect(pace).not.toHaveClass('hot')
+    const pace = await screen.findByText('85% of budget used; projected $280.00 by Jul 14')
+    expect(pace).toHaveClass('pace', 'hot')
+    expect(screen.queryByText(/On pace to exceed/)).not.toBeInTheDocument()
   })
 
   it('falls back to StatusJson.plan when the CLI returns a singular plan summary', async () => {
@@ -190,7 +194,7 @@ describe('Plans', () => {
     render(<Plans period="month" />)
 
     expect(await screen.findByText('Not connected. Log in with the Codex CLI.')).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Membership value' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Budget plans' })).not.toBeInTheDocument()
   })
 
   it('renders the CLI locate state when getPlans reports not-found', async () => {
@@ -210,8 +214,8 @@ describe('Plans', () => {
 
     render(<Plans period="30days" />)
 
-    expect(await screen.findByText('€20.00 / month membership · cursor')).toBeInTheDocument()
-    expect(screen.getByText('€8.20 API-equivalent · 41% of plan price')).toBeInTheDocument()
+    expect(await screen.findByText('€20.00 / month budget · API-equivalent, not a live provider window · cursor')).toBeInTheDocument()
+    expect(screen.getByText('€8.20 · 41%')).toBeInTheDocument()
   })
 
   it('forces a quota refresh only when refreshToken changes, not on the steady poll', async () => {

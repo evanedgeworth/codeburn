@@ -138,6 +138,7 @@ type JsonPlanSummary = {
   budget: number
   spent: number
   percentUsed: number
+  status: 'under' | 'near' | 'over'
   projectedMonthEnd: number
   daysUntilReset: number
   periodStart: string
@@ -151,6 +152,7 @@ function toJsonPlanSummary(planUsage: PlanUsage): JsonPlanSummary {
     budget: convertCost(planUsage.budgetUsd),
     spent: convertCost(planUsage.spentApiEquivalentUsd),
     percentUsed: Math.round(planUsage.percentUsed * 10) / 10,
+    status: planUsage.status,
     projectedMonthEnd: convertCost(planUsage.projectedMonthUsd),
     daysUntilReset: planUsage.daysUntilReset,
     periodStart: planUsage.periodStart.toISOString(),

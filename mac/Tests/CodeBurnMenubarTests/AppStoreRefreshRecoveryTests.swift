@@ -393,6 +393,8 @@ struct AppStoreRefreshRecoveryTests {
         let defaults = UserDefaults.standard
         let previousDisplayMetric = defaults.object(forKey: "CodeBurnDisplayMetric")
         let previousDailyBudget = defaults.object(forKey: "CodeBurnDailyBudget")
+        let coverageKey = BillingCoveragePreferences.defaultsKey(for: .claude)
+        let previousClaudeCoverage = defaults.object(forKey: coverageKey)
         defer {
             if let previousDisplayMetric {
                 defaults.set(previousDisplayMetric, forKey: "CodeBurnDisplayMetric")
@@ -404,6 +406,11 @@ struct AppStoreRefreshRecoveryTests {
             } else {
                 defaults.removeObject(forKey: "CodeBurnDailyBudget")
             }
+            if let previousClaudeCoverage {
+                defaults.set(previousClaudeCoverage, forKey: coverageKey)
+            } else {
+                defaults.removeObject(forKey: coverageKey)
+            }
         }
 
         let store = AppStore()
@@ -411,6 +418,7 @@ struct AppStoreRefreshRecoveryTests {
         store.selectedDays = []
         store.displayMetric = .cost
         store.dailyBudget = 10
+        store.claudeCoverageMode = .billable
         store.setCachedPayloadForTesting(
             menubarPayload(cost: 12.5),
             scope: .local,

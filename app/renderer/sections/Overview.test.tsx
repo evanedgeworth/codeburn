@@ -255,7 +255,7 @@ describe('Overview', () => {
     expect(ticks[0]).toHaveTextContent(new Date(
       now.getFullYear(), now.getMonth(), now.getDate() - 29,
     ).toLocaleString('en-US', { month: 'short', day: 'numeric' }))
-    const summaries = screen.getByLabelText('Daily API-equivalent summary')
+    const summaries = screen.getByLabelText('Daily spend summary')
     expect(within(summaries).getByText('Avg/day')).toBeInTheDocument()
     expect(within(summaries).getByText('$6.71')).toBeInTheDocument()
     expect(within(summaries).getByText('Peak')).toBeInTheDocument()
@@ -270,19 +270,19 @@ describe('Overview', () => {
     // would match two cards.
     expect(within(kpis).getByText('$84.20')).toBeInTheDocument()
     expect(within(kpis).getByText('across 11 fixes')).toBeInTheDocument()
-    const statsCard = screen.getByText('Month-to-date API-equivalent').closest('.ov-stats3')
+    const statsCard = screen.getByText('Month to date').closest('.ov-stats3')
     expect(statsCard).toHaveClass('ov-card')
     expect(statsCard?.children).toHaveLength(2)
-    expect(within(statsCard as HTMLElement).getByText('Projected API-equivalent')).toBeInTheDocument()
+    expect(within(statsCard as HTMLElement).getByText('Projected month')).toBeInTheDocument()
     expect(screen.queryByText('Nearest limit')).not.toBeInTheDocument()
   })
 
-  it('renders efficiency and cost-per-outcome without treating API-equivalent value as a cash risk', async () => {
+  it('renders efficiency, cost-per-outcome, and the weekday-spike risk signal', async () => {
     const now = new Date()
     const payload = makePayload(now)
     const today = payload.history.daily.at(-1)
     if (!today) throw new Error('fixture must contain today')
-    today.cost = 50
+    today.cost = 50 // Prior same weekdays are $5, so the real detector reports 10×.
     getOverview.mockResolvedValue(payload)
 
     render(<Overview period="30days" provider="all" />)
@@ -292,8 +292,10 @@ describe('Overview', () => {
     expect(outcome).not.toBeNull()
     expect(within(outcome as HTMLElement).getByText('$25.00')).toBeInTheDocument()
     expect(within(outcome as HTMLElement).getByText('$40.00')).toBeInTheDocument()
+    // The weekday-spike anomaly is absorbed into the Signals card as a risk.
     const signals = screen.getByLabelText('Coaching signals')
-    expect(within(signals).queryByText('Risks')).not.toBeInTheDocument()
+    const risks = within(signals).getByText('Risks').closest('.ov-signal-group') as HTMLElement
+    expect(within(risks).getByText(/Today's spend is 10× your typical/)).toBeInTheDocument()
   })
 
   it('hides the applied-fixes line when there are no realized savings', async () => {
@@ -487,18 +489,18 @@ describe('Overview', () => {
     const overview = polled(makePayload(now))
 
     const { rerender } = render(<OverviewContent period="30days" provider="all" overview={overview} />)
-    // Baseline (no range): the month-to-date card and coach pacing line are
-    // present. API-equivalent cost changes are not risk signals.
-    expect(await screen.findByText('Month-to-date API-equivalent')).toBeInTheDocument()
+    // Baseline (no range): the MTD card, the coach pacing line, and the
+    // week-over-week Signals entry are all present.
+    expect(await screen.findByText('Month to date')).toBeInTheDocument()
     expect(screen.getAllByText(/than last week/).length).toBeGreaterThan(0)
-    expect(screen.queryByText(/vs last 7 days/)).not.toBeInTheDocument()
+    expect(screen.getByText(/vs last 7 days/)).toBeInTheDocument()
 
     const from = localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2))
     const to = localDateKey(now)
     rerender(<OverviewContent period="30days" provider="all" range={{ from, to }} overview={overview} />)
 
-    expect(screen.queryByText('Month-to-date API-equivalent')).not.toBeInTheDocument()
-    expect(screen.queryByText('Projected API-equivalent')).not.toBeInTheDocument()
+    expect(screen.queryByText('Month to date')).not.toBeInTheDocument()
+    expect(screen.queryByText('Projected month')).not.toBeInTheDocument()
     expect(screen.queryByText(/than last week/)).toBeNull()
     // The week-over-week Signals entry is suppressed under a custom range too.
     expect(screen.queryByText(/vs last 7 days|vs prior 7 days/)).toBeNull()
@@ -617,9 +619,9 @@ describe('Overview', () => {
       },
     }), now, false)
     expect(improvements.map(s => s.text)).toEqual([
-      'Cache hit only 40%, cold prompts use more quota',
+      'Cache hit only 40%, paying for cold prompts',
       '40% one-shot, lots of iteration',
-      'Retry tax is 30% of API-equivalent value',
+      'Retry tax is 30% of spend',
     ])
   })
 
@@ -631,37 +633,46 @@ describe('Overview', () => {
     expect(improvements).toEqual([])
   })
 
-  it('derives a streak without presenting lower API-equivalent value as lower cash spend', () => {
+  it('derives streak and a week-over-week drop as wins from history', () => {
     const now = new Date()
+    // 14 consecutive active days; prior 7 at $20, recent 7 at $5 → spend down 75%.
     const daily = consecutiveDays(now, 14, i => (i < 7 ? 20 : 5))
     const { wins } = deriveSignals(signalsPayload(now, {
       current: { cacheHitPercent: 60, oneShotRate: 0.6 },
       daily,
     }), now, false)
-    expect(wins.map(s => s.text)).toEqual(['14-day usage streak'])
+    expect(wins.map(s => s.text)).toEqual([
+      'Spend down 75% vs last 7 days',
+      '14-day usage streak',
+    ])
   })
 
-  it('does not treat API-equivalent changes as billable-cost risks', () => {
+  it('reports weekday spike, week-over-week rise, and month overrun as risks', () => {
     const now = new Date(2026, 6, 15) // Jul 15 2026
+    // June total = $5 (prior-month baseline); July: prior 7 low, recent 7 high.
     const daily = [mkDay('2026-06-11', 5), ...consecutiveDays(now, 14, i => (i < 7 ? 2 : 20))]
     const { risks } = deriveSignals(signalsPayload(now, {
       current: { cacheHitPercent: 60, oneShotRate: 0.6 },
       daily,
     }), now, false)
-    expect(risks).toEqual([])
+    expect(risks).toHaveLength(3)
+    expect(risks[0].text).toMatch(/Today's spend is 10× your typical/)
+    expect(risks[1].text).toBe('Spend up 900% vs prior 7 days')
+    expect(risks[2].text).toMatch(/^On pace for .* this month, \+\d+% vs last$/)
   })
 
-  it('also keeps API-equivalent changes out of risks under a custom range', () => {
+  it('suppresses week-over-week and projection risks under a custom range, keeping the weekday spike', () => {
     const now = new Date(2026, 6, 15)
     const daily = [mkDay('2026-06-11', 5), ...consecutiveDays(now, 14, i => (i < 7 ? 2 : 20))]
     const payload = signalsPayload(now, { current: { cacheHitPercent: 60, oneShotRate: 0.6 }, daily })
     const { risks } = deriveSignals(payload, now, true)
-    expect(risks).toEqual([])
+    expect(risks).toHaveLength(1)
+    expect(risks[0].text).toMatch(/Today's spend is 10× your typical/)
   })
 
   it('caps each group at three signals', () => {
     const now = new Date()
-    // Four wins qualify (cache, one-shot, streak, local); cap keeps 3.
+    // Five wins would qualify (cache, one-shot, week-down, streak, local); cap keeps 3.
     const daily = consecutiveDays(now, 14, i => (i < 7 ? 20 : 5))
     const { wins } = deriveSignals(signalsPayload(now, {
       current: {
@@ -675,7 +686,7 @@ describe('Overview', () => {
     expect(wins.map(s => s.text)).toEqual([
       'Cache hit at 85%, most prompts reuse cache',
       '82% one-shot, edits land first try',
-      '14-day usage streak',
+      'Spend down 75% vs last 7 days',
     ])
   })
 
@@ -714,7 +725,7 @@ describe('Overview', () => {
 
     render(<OverviewContent period="30days" provider="all" overview={polled(payload)} />)
 
-    expect(await screen.findByText('Daily API-equivalent')).toBeInTheDocument()
+    expect(await screen.findByText('Daily spend')).toBeInTheDocument()
     expect(screen.queryByLabelText('Coaching signals')).not.toBeInTheDocument()
   })
 

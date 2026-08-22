@@ -85,7 +85,7 @@ function EfficiencyScorecard({ current, bare = false }: { current: MenubarPayloa
           <div className="ov-component-track"><span style={{ width: `${cacheFrac * 100}%` }} /></div>
         </div>
         <div className="ov-component-row">
-          <div><span>Retry tax</span><strong>{formatUsd(current.retryTax.totalUSD)} · {(retrySpendFraction * 100).toFixed(1)}% of API-equivalent</strong></div>
+          <div><span>Retry tax</span><strong>{formatUsd(current.retryTax.totalUSD)} · {(retrySpendFraction * 100).toFixed(1)}% of spend</strong></div>
           <div className="ov-component-track adverse"><span style={{ width: `${retryPenalty * 100}%` }} /></div>
         </div>
       </div>
@@ -125,7 +125,7 @@ function CostPerOutcome({ outcome }: { outcome: Polled<YieldJsonReport> }) {
       <div className="ov-panel-head"><h3>Cost per outcome</h3><span className="r">Yield</span></div>
       <div className="ov-panel-body">
         {body}
-        <p className="ov-widget-caption">Git-correlated. Reverted/abandoned = API-equivalent value that didn't ship.</p>
+        <p className="ov-widget-caption">Git-correlated. Reverted/abandoned = spend that didn't ship.</p>
       </div>
     </div>
   )
@@ -219,10 +219,10 @@ export type SignalGroups = { wins: Signal[]; improvements: Signal[]; risks: Sign
 /**
  * Client-side port of the menubar's FindingsSection rule set
  * (mac/Sources/CodeBurnMenubar/Views/FindingsSection.swift:133-205). Thresholds
- * mirror the Swift. Cost-shaped usage is never promoted to a cash-spend risk:
- * this payload has API-equivalent value but no billable-cost attribution.
+ * mirror the Swift; the desktop-only weekday-spike anomaly is absorbed as a risk.
+ * Week-over-week and month-projection rules are suppressed for a custom range.
  */
-export function deriveSignals(data: MenubarPayload, now: Date, _rangeActive: boolean): SignalGroups {
+export function deriveSignals(data: MenubarPayload, now: Date, rangeActive: boolean): SignalGroups {
   const daily = data.history.daily
   const current = data.current
   const wins: Signal[] = []
@@ -231,12 +231,46 @@ export function deriveSignals(data: MenubarPayload, now: Date, _rangeActive: boo
 
   const streak = streakDays(daily, now)
 
+  // Week-over-week: mean of the last 7 active entries vs the prior 7 (matches the
+  // coach's pacing line). Needs >= 14 entries for both windows to exist.
+  let weekDelta: number | null = null
+  if (daily.length >= 14) {
+    const recent14 = daily.slice(-14)
+    const weekNow = mean(recent14.slice(-7).map(day => day.cost))
+    const weekPrior = mean(recent14.slice(0, 7).map(day => day.cost))
+    if (weekPrior > 0) weekDelta = (weekNow - weekPrior) / weekPrior * 100
+  }
+
+  // Month projection vs previous calendar month's total.
+  const todayKey = localDateKey(now)
+  const monthPrefix = todayKey.slice(0, 7)
+  const mtd = daily.filter(day => day.date.startsWith(monthPrefix)).reduce((sum, day) => sum + day.cost, 0)
+  const medianDaily = median(daily.slice(-7).map(day => day.cost))
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  const projectedMonth = mtd + medianDaily * Math.max(0, daysInMonth - now.getDate())
+  const prevPrefix = localDateKey(new Date(now.getFullYear(), now.getMonth() - 1, 1)).slice(0, 7)
+  const prevMonthTotal = daily.filter(day => day.date.startsWith(prevPrefix)).reduce((sum, day) => sum + day.cost, 0)
+
+  // Weekday spike: today vs the mean of prior same-weekday entries.
+  const today = daily.find(day => day.date === todayKey)
+  const sameWeekdayCosts = daily
+    .filter(day => {
+      if (day.date === todayKey) return false
+      const [year, month, date] = day.date.split('-').map(Number)
+      return new Date(year, month - 1, date).getDay() === now.getDay()
+    })
+    .map(day => day.cost)
+  const typicalWeekday = mean(sameWeekdayCosts)
+
   // ————— Wins —————
   if (current.cacheHitPercent >= 80) {
     wins.push({ text: `Cache hit at ${Math.round(current.cacheHitPercent)}%, most prompts reuse cache` })
   }
   if (current.oneShotRate !== null && current.oneShotRate >= 0.75) {
     wins.push({ text: `${Math.round(current.oneShotRate * 100)}% one-shot, edits land first try` })
+  }
+  if (!rangeActive && weekDelta !== null && weekDelta < -10) {
+    wins.push({ text: `Spend down ${Math.round(Math.abs(weekDelta))}% vs last 7 days` })
   }
   if (streak >= 5) {
     wins.push({ text: `${streak}-day usage streak` })
@@ -250,7 +284,7 @@ export function deriveSignals(data: MenubarPayload, now: Date, _rangeActive: boo
     improvements.push({ text: finding.title, trailing: formatUsd(finding.savingsUSD) })
   }
   if (current.cacheHitPercent > 0 && current.cacheHitPercent < 50) {
-    improvements.push({ text: `Cache hit only ${Math.round(current.cacheHitPercent)}%, cold prompts use more quota` })
+    improvements.push({ text: `Cache hit only ${Math.round(current.cacheHitPercent)}%, paying for cold prompts` })
   }
   if (current.oneShotRate !== null && current.oneShotRate < 0.5) {
     improvements.push({ text: `${Math.round(current.oneShotRate * 100)}% one-shot, lots of iteration` })
@@ -259,7 +293,21 @@ export function deriveSignals(data: MenubarPayload, now: Date, _rangeActive: boo
   // efficiency scorecard's retry penalty saturates (retrySpendFraction * 4 == 1).
   const retryShare = current.retryTax.totalUSD / Math.max(current.cost, 1e-9)
   if (retryShare >= 0.25) {
-    improvements.push({ text: `Retry tax is ${Math.round(retryShare * 100)}% of API-equivalent value` })
+    improvements.push({ text: `Retry tax is ${Math.round(retryShare * 100)}% of spend` })
+  }
+
+  // ————— Risks —————
+  if (today && typicalWeekday > 0 && today.cost > typicalWeekday * 1.8) {
+    const ratio = today.cost / typicalWeekday
+    const weekday = now.toLocaleString('en-US', { weekday: 'long' })
+    risks.push({ text: `Today's spend is ${ratio.toFixed(1).replace(/\.0$/, '')}× your typical ${weekday}` })
+  }
+  if (!rangeActive && weekDelta !== null && weekDelta > 25) {
+    risks.push({ text: `Spend up ${Math.round(weekDelta)}% vs prior 7 days` })
+  }
+  if (!rangeActive && prevMonthTotal > 0 && projectedMonth > prevMonthTotal * 1.3) {
+    const overPct = Math.round((projectedMonth - prevMonthTotal) / prevMonthTotal * 100)
+    risks.push({ text: `On pace for ${formatUsd(projectedMonth)} this month, +${overPct}% vs last` })
   }
 
   return { wins: wins.slice(0, 3), improvements: improvements.slice(0, 3), risks: risks.slice(0, 3) }
@@ -541,7 +589,7 @@ function DailyChart({ daily, dataStart = null, animateKey = '' }: { daily: Daily
           return <span key={day.date} style={{ left: `${daily.length > 1 ? index / (daily.length - 1) * 100 : 0}%` }}>{formatChartDate(day.date)}</span>
         })}
       </div>
-      <div className="ov-chart-summaries" aria-label="Daily API-equivalent summary">
+      <div className="ov-chart-summaries" aria-label="Daily spend summary">
         <div className="ov-summary-chip"><span>Avg/day</span><strong>{formatUsd(average)}</strong></div>
         <div className="ov-summary-chip"><span>Peak</span><strong>{peak ? `${formatUsd(peak.cost)} · ${formatShortDay(peak.date)}` : '$0.00'}</strong></div>
         <div className="ov-summary-chip"><span>Yesterday</span><strong>{formatUsd(yesterday?.cost ?? 0)}</strong></div>
@@ -717,14 +765,14 @@ export function OverviewContent({
 
       {!rangeActive && (
         <div className="ov-card ov-stats3">
-          <div className="ov-stat"><div className="ov-label">Month-to-date API-equivalent</div><div className="v">{formatUsd(stats.mtd)}</div><div className="d">{stats.pacePct === null ? `No ${stats.prevMonthName} pace yet` : `${stats.pacePct >= 0 ? '+' : ''}${Math.round(stats.pacePct)}% vs ${stats.prevMonthName} pace`}</div></div>
-          <div className="ov-stat"><div className="ov-label">Projected API-equivalent</div><div className="v">{formatUsd(stats.projected)} <small>est</small></div><div className="d warn">{formatUsd(Math.max(0, stats.projected - stats.mtd))} to go</div></div>
+          <div className="ov-stat"><div className="ov-label">Month to date</div><div className="v">{formatUsd(stats.mtd)}</div><div className="d">{stats.pacePct === null ? `No ${stats.prevMonthName} pace yet` : `${stats.pacePct >= 0 ? '+' : ''}${Math.round(stats.pacePct)}% vs ${stats.prevMonthName} pace`}</div></div>
+          <div className="ov-stat"><div className="ov-label">Projected month</div><div className="v">{formatUsd(stats.projected)} <small>est</small></div><div className="d warn">{formatUsd(Math.max(0, stats.projected - stats.mtd))} to go</div></div>
         </div>
       )}
 
       <div className="ov-card ov-panel ov-chart-widget">
-        <div className="ov-panel-head"><h3>Daily API-equivalent</h3><span className="r">{topModel ? `Biggest driver: ${topModel.name}` : 'No model driver yet'}</span></div>
-        <div className="ov-panel-body">{data.history.daily.length ? <DailyChart daily={chartDaily} dataStart={dataStartKey(data.history.daily)} animateKey={animateKey} /> : <EmptyNote>No tracked usage yet.</EmptyNote>}</div>
+        <div className="ov-panel-head"><h3>Daily spend</h3><span className="r">{topModel ? `Biggest driver: ${topModel.name}` : 'No model driver yet'}</span></div>
+        <div className="ov-panel-body">{data.history.daily.length ? <DailyChart daily={chartDaily} dataStart={dataStartKey(data.history.daily)} animateKey={animateKey} /> : <EmptyNote>No spend yet.</EmptyNote>}</div>
       </div>
 
       <WorkflowCard current={data.current} />

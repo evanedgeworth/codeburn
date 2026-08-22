@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import { calculateCost } from './models.js'
 import type { DateRange } from './types.js'
@@ -35,6 +35,18 @@ export type ClaudeHistoryStore = {
   totalMessages: number
   modelUsage: Record<string, ClaudeModelUsage>
   dailyModelTokens: ClaudeDailyModelTokens[]
+  sourceId?: string
+  sourceLabel?: string
+  sourcePath?: string
+  generationId?: string
+  snapshots?: ClaudeHistorySnapshot[]
+}
+
+export type ClaudeHistorySnapshot = Omit<ClaudeHistoryStore, 'version' | 'snapshots'> & {
+  sourceId: string
+  sourceLabel: string
+  sourcePath: string
+  generationId: string
 }
 
 export type ClaudeHistoryImportResult = {
@@ -48,6 +60,10 @@ export type ClaudeHistoryImportResult = {
   models: number
   totalTokens: number
   storePath: string
+  sourceId: string
+  sourceLabel: string
+  generationId: string
+  unchanged: boolean
 }
 
 export type ClaudeHistoricalCalls = {
@@ -57,6 +73,8 @@ export type ClaudeHistoricalCalls = {
   excludedOverlapTokens: number
   excludedOverlapDays: string[]
 }
+
+export type ClaudeStatsSource = { id: string; label: string; path: string }
 
 export function getClaudeHistoryStorePath(): string {
   return process.env['CODEBURN_CLAUDE_HISTORY_STORE']
@@ -183,9 +201,125 @@ async function saveStore(store: ClaudeHistoryStore): Promise<void> {
   }
 }
 
-export async function importClaudeStatsCache(filePath: string): Promise<ClaudeHistoryImportResult> {
+function snapshotFromStore(store: ClaudeHistoryStore, fallback?: { id: string; label: string; path: string }): ClaudeHistorySnapshot {
+  const sourcePath = store.sourcePath ?? fallback?.path ?? dirname(resolve(store.sourceName))
+  const sourceId = store.sourceId ?? fallback?.id ?? `claude-history:${createHash('sha256').update(sourcePath).digest('hex').slice(0, 16)}`
+  const sourceLabel = store.sourceLabel ?? fallback?.label ?? 'Imported Claude history'
+  return {
+    importedAt: store.importedAt,
+    sourceName: store.sourceName,
+    sourceHash: store.sourceHash,
+    firstSessionDate: store.firstSessionDate,
+    lastComputedDate: store.lastComputedDate,
+    totalSessions: store.totalSessions,
+    totalMessages: store.totalMessages,
+    modelUsage: store.modelUsage,
+    dailyModelTokens: store.dailyModelTokens,
+    sourceId,
+    sourceLabel,
+    sourcePath,
+    generationId: store.generationId ?? `${sourceId}:g0`,
+  }
+}
+
+function snapshotIsMonotonic(prior: ClaudeHistorySnapshot, next: ClaudeHistoryStore): boolean {
+  if (prior.firstSessionDate !== next.firstSessionDate) return false
+  if (next.lastComputedDate < prior.lastComputedDate) return false
+  for (const [model, oldUsage] of Object.entries(prior.modelUsage)) {
+    const newUsage = next.modelUsage[model]
+    if (!newUsage) return false
+    if (newUsage.inputTokens < oldUsage.inputTokens
+      || newUsage.outputTokens < oldUsage.outputTokens
+      || newUsage.cacheReadInputTokens < oldUsage.cacheReadInputTokens
+      || newUsage.cacheCreationInputTokens < oldUsage.cacheCreationInputTokens
+      || newUsage.webSearchRequests < oldUsage.webSearchRequests) return false
+  }
+  return true
+}
+
+function activeSnapshots(snapshots: ClaudeHistorySnapshot[]): ClaudeHistorySnapshot[] {
+  const latest = new Map<string, ClaudeHistorySnapshot>()
+  for (const snapshot of snapshots) {
+    const current = latest.get(snapshot.generationId)
+    if (!current || snapshot.importedAt >= current.importedAt) latest.set(snapshot.generationId, snapshot)
+  }
+  return [...latest.values()].sort((a, b) => a.firstSessionDate.localeCompare(b.firstSessionDate) || a.generationId.localeCompare(b.generationId))
+}
+
+export async function importClaudeStatsCache(
+  filePath: string,
+  options?: { sourceId?: string; sourceLabel?: string; sourcePath?: string },
+): Promise<ClaudeHistoryImportResult> {
   const raw = await readFile(filePath, 'utf8')
-  const store = parseStatsCache(raw, basename(filePath))
+  const parsed = parseStatsCache(raw, basename(filePath))
+  const sourcePath = resolve(options?.sourcePath ?? dirname(filePath))
+  const sourceId = options?.sourceId?.trim()
+    || `claude-config:${createHash('sha256').update(sourcePath).digest('hex').slice(0, 16)}`
+  const sourceLabel = options?.sourceLabel?.trim() || (sourcePath === resolve(join(homedir(), '.claude')) ? 'Default Claude' : basename(sourcePath))
+  const existing = await readClaudeHistoryStore()
+  let snapshots = existing?.snapshots?.length
+    ? [...existing.snapshots]
+    : existing ? [snapshotFromStore(existing, { id: sourceId, label: sourceLabel, path: sourcePath })] : []
+  // Early one-snapshot imports did not retain their actual config path and use
+  // a claude-history:* fallback identity. When the automatic snapshotter later
+  // sees the byte-identical cache, rehome that legacy receipt instead of
+  // treating the same cumulative account total as a second account.
+  const legacyMatchIndex = snapshots.findIndex(snapshot => snapshot.sourceHash === parsed.sourceHash
+    && snapshot.sourceId.startsWith('claude-history:'))
+  let migratedLegacyIdentity = false
+  if (legacyMatchIndex >= 0 && snapshots[legacyMatchIndex]!.sourceId !== sourceId) {
+    const legacy = snapshots[legacyMatchIndex]!
+    snapshots[legacyMatchIndex] = {
+      ...legacy,
+      sourceId,
+      sourceLabel,
+      sourcePath,
+      generationId: `${sourceId}:g0`,
+    }
+    migratedLegacyIdentity = true
+  }
+  const sameHash = snapshots.find(snapshot => snapshot.sourceId === sourceId && snapshot.sourceHash === parsed.sourceHash)
+  const generations = activeSnapshots(snapshots.filter(snapshot => snapshot.sourceId === sourceId))
+  const prior = generations.at(-1)
+  const generationId = sameHash?.generationId
+    ?? (prior && snapshotIsMonotonic(prior, parsed)
+      ? prior.generationId
+      : `${sourceId}:g${generations.length}`)
+  const snapshot: ClaudeHistorySnapshot = {
+    ...snapshotFromStore(parsed, { id: sourceId, label: sourceLabel, path: sourcePath }),
+    sourceId,
+    sourceLabel,
+    sourcePath,
+    generationId,
+  }
+  if (sameHash && existing?.snapshots?.length && !migratedLegacyIdentity) {
+    return {
+      sourceName: sameHash.sourceName,
+      importedAt: sameHash.importedAt,
+      firstSessionDate: sameHash.firstSessionDate,
+      lastComputedDate: sameHash.lastComputedDate,
+      totalSessions: sameHash.totalSessions,
+      totalMessages: sameHash.totalMessages,
+      days: sameHash.dailyModelTokens.length,
+      models: Object.keys(sameHash.modelUsage).length,
+      totalTokens: totalStoreTokens({ version: STORE_VERSION, ...sameHash }),
+      storePath: getClaudeHistoryStorePath(),
+      sourceId,
+      sourceLabel,
+      generationId: sameHash.generationId,
+      unchanged: true,
+    }
+  }
+  const nextSnapshots = sameHash ? snapshots : [...snapshots, snapshot]
+  const store: ClaudeHistoryStore = {
+    ...parsed,
+    importedAt: sameHash?.importedAt ?? parsed.importedAt,
+    sourceId,
+    sourceLabel,
+    sourcePath,
+    generationId,
+    snapshots: nextSnapshots,
+  }
   await saveStore(store)
   return {
     sourceName: store.sourceName,
@@ -198,6 +332,10 @@ export async function importClaudeStatsCache(filePath: string): Promise<ClaudeHi
     models: Object.keys(store.modelUsage).length,
     totalTokens: totalStoreTokens(store),
     storePath: getClaudeHistoryStorePath(),
+    sourceId,
+    sourceLabel,
+    generationId,
+    unchanged: sameHash !== undefined,
   }
 }
 
@@ -209,10 +347,61 @@ export async function readClaudeHistoryStore(): Promise<ClaudeHistoryStore | nul
     // Reuse the strict parser by translating the persisted shape back into the
     // vendor fields; retain the immutable import receipt around it.
     const checked = parseStatsCache(JSON.stringify(parsed), parsed.sourceName)
-    return { ...checked, importedAt: parsed.importedAt, sourceHash: parsed.sourceHash }
+    const snapshots = Array.isArray(parsed.snapshots)
+      ? parsed.snapshots.flatMap(rawSnapshot => {
+          try {
+            const validated = parseStatsCache(JSON.stringify(rawSnapshot), rawSnapshot.sourceName)
+            return [{
+              ...snapshotFromStore(validated, { id: rawSnapshot.sourceId, label: rawSnapshot.sourceLabel, path: rawSnapshot.sourcePath }),
+              importedAt: rawSnapshot.importedAt,
+              sourceHash: rawSnapshot.sourceHash,
+              sourceId: rawSnapshot.sourceId,
+              sourceLabel: rawSnapshot.sourceLabel,
+              sourcePath: rawSnapshot.sourcePath,
+              generationId: rawSnapshot.generationId,
+            } satisfies ClaudeHistorySnapshot]
+          } catch { return [] }
+        })
+      : undefined
+    return {
+      ...checked,
+      importedAt: parsed.importedAt,
+      sourceHash: parsed.sourceHash,
+      sourceId: parsed.sourceId,
+      sourceLabel: parsed.sourceLabel,
+      sourcePath: parsed.sourcePath,
+      generationId: parsed.generationId,
+      ...(snapshots?.length ? { snapshots } : {}),
+    }
   } catch {
     return null
   }
+}
+
+export async function readClaudeHistorySnapshots(): Promise<ClaudeHistorySnapshot[]> {
+  const store = await readClaudeHistoryStore()
+  if (!store) return []
+  const snapshots = store.snapshots?.length ? store.snapshots : [snapshotFromStore(store)]
+  return activeSnapshots(snapshots)
+}
+
+/** Snapshot every configured stats cache. Unchanged hashes are a no-op. */
+export async function snapshotClaudeStatsCaches(sources: ClaudeStatsSource[]): Promise<ClaudeHistoryImportResult[]> {
+  const results: ClaudeHistoryImportResult[] = []
+  for (const source of sources) {
+    const statsPath = join(source.path, 'stats-cache.json')
+    try {
+      results.push(await importClaudeStatsCache(statsPath, {
+        sourceId: source.id,
+        sourceLabel: source.label,
+        sourcePath: source.path,
+      }))
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code
+      if (code !== 'ENOENT') throw error
+    }
+  }
+  return results
 }
 
 export function totalStoreTokens(store: ClaudeHistoryStore): number {
@@ -245,64 +434,73 @@ function inRange(timestamp: string, range?: DateRange): boolean {
 
 export async function buildClaudeHistoricalCalls(
   range?: DateRange,
-  excludedDays: ReadonlySet<string> = new Set(),
+  excludedDays: ReadonlySet<string> | ReadonlyMap<string, ReadonlySet<string>> = new Set(),
 ): Promise<ClaudeHistoricalCalls> {
-  const store = await readClaudeHistoryStore()
-  if (!store) return { calls: [], exactAggregateTokens: 0, includedTokens: 0, excludedOverlapTokens: 0, excludedOverlapDays: [] }
+  const snapshots = await readClaudeHistorySnapshots()
+  if (snapshots.length === 0) return { calls: [], exactAggregateTokens: 0, includedTokens: 0, excludedOverlapTokens: 0, excludedOverlapDays: [] }
 
   const calls: ParsedProviderCall[] = []
   let excludedOverlapTokens = 0
   const excluded = new Set<string>()
-  for (const [model, usage] of Object.entries(store.modelUsage)) {
-    const days = store.dailyModelTokens
-      .map(day => ({ date: day.date, weight: day.tokensByModel[model] ?? 0 }))
-      .filter(day => day.weight > 0)
-    const weights = days.map(day => day.weight)
-    const input = allocateInteger(usage.inputTokens, weights)
-    const output = allocateInteger(usage.outputTokens, weights)
-    const cacheRead = allocateInteger(usage.cacheReadInputTokens, weights)
-    const cacheWrite = allocateInteger(usage.cacheCreationInputTokens, weights)
-    const webSearch = allocateInteger(usage.webSearchRequests, weights)
-    for (let index = 0; index < days.length; index++) {
-      const day = days[index]!
-      const timestamp = `${day.date}T12:00:00.000Z`
-      const tokens = input[index]! + output[index]! + cacheRead[index]! + cacheWrite[index]!
-      if (excludedDays.has(day.date)) {
-        excluded.add(day.date)
-        excludedOverlapTokens += tokens
-        continue
+  for (const store of snapshots) {
+    const sourceExcluded = excludedDays instanceof Map
+      ? (excludedDays.get(store.sourceId) ?? new Set<string>())
+      : excludedDays
+    for (const [model, usage] of Object.entries(store.modelUsage)) {
+      const days = store.dailyModelTokens
+        .map(day => ({ date: day.date, weight: day.tokensByModel[model] ?? 0 }))
+        .filter(day => day.weight > 0)
+      const weights = days.map(day => day.weight)
+      const input = allocateInteger(usage.inputTokens, weights)
+      const output = allocateInteger(usage.outputTokens, weights)
+      const cacheRead = allocateInteger(usage.cacheReadInputTokens, weights)
+      const cacheWrite = allocateInteger(usage.cacheCreationInputTokens, weights)
+      const webSearch = allocateInteger(usage.webSearchRequests, weights)
+      for (let index = 0; index < days.length; index++) {
+        const day = days[index]!
+        const timestamp = `${day.date}T12:00:00.000Z`
+        const tokens = input[index]! + output[index]! + cacheRead[index]! + cacheWrite[index]!
+        if (sourceExcluded.has(day.date)) {
+          excluded.add(day.date)
+          excludedOverlapTokens += tokens
+          continue
+        }
+        if (!inRange(timestamp, range)) continue
+        calls.push({
+          provider: 'claude',
+          model,
+          inputTokens: input[index]!,
+          outputTokens: output[index]!,
+          cacheCreationInputTokens: cacheWrite[index]!,
+          cacheReadInputTokens: cacheRead[index]!,
+          cachedInputTokens: 0,
+          reasoningTokens: 0,
+          webSearchRequests: webSearch[index]!,
+          costUSD: calculateCost(model, input[index]!, output[index]!, cacheWrite[index]!, cacheRead[index]!, webSearch[index]!),
+          // Aggregate component totals are exact. Only their day-level allocation
+          // is inferred from Claude's exact uncached daily series.
+          costIsEstimated: true,
+          tools: [],
+          bashCommands: [],
+          timestamp,
+          speed: 'standard',
+          deduplicationKey: `claude-history:${store.generationId}:${store.sourceHash}:${day.date}:${model}`,
+          userMessage: 'Imported Claude historical aggregate (exact total; daily cache allocation estimated)',
+          sessionId: `claude-history:${store.generationId}:${day.date}`,
+          project: `Claude historical aggregate (${store.sourceLabel})`,
+          projectPath: store.sourcePath,
+          sourceId: store.sourceId,
+          sourceLabel: store.sourceLabel,
+          sourcePath: store.sourcePath,
+          sourceKind: 'claude-config',
+        })
       }
-      if (!inRange(timestamp, range)) continue
-      calls.push({
-        provider: 'claude',
-        model,
-        inputTokens: input[index]!,
-        outputTokens: output[index]!,
-        cacheCreationInputTokens: cacheWrite[index]!,
-        cacheReadInputTokens: cacheRead[index]!,
-        cachedInputTokens: 0,
-        reasoningTokens: 0,
-        webSearchRequests: webSearch[index]!,
-        costUSD: calculateCost(model, input[index]!, output[index]!, cacheWrite[index]!, cacheRead[index]!, webSearch[index]!),
-        // Aggregate component totals are exact. Only their day-level allocation
-        // is inferred from Claude's exact uncached daily series.
-        costIsEstimated: true,
-        tools: [],
-        bashCommands: [],
-        timestamp,
-        speed: 'standard',
-        deduplicationKey: `claude-history:${store.sourceHash}:${day.date}:${model}`,
-        userMessage: 'Imported Claude historical aggregate (exact total; daily cache allocation estimated)',
-        sessionId: `claude-history:${day.date}`,
-        project: 'Claude historical aggregate',
-        projectPath: join(homedir(), '.claude'),
-      })
     }
   }
   const includedTokens = calls.reduce((sum, call) => sum + call.inputTokens + call.outputTokens + call.cacheReadInputTokens + call.cacheCreationInputTokens, 0)
   return {
     calls,
-    exactAggregateTokens: totalStoreTokens(store),
+    exactAggregateTokens: snapshots.reduce((sum, snapshot) => sum + totalStoreTokens({ version: STORE_VERSION, ...snapshot }), 0),
     includedTokens,
     excludedOverlapTokens,
     excludedOverlapDays: [...excluded].sort(),

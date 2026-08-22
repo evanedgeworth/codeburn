@@ -59,6 +59,35 @@ struct MenubarPayloadCombinedTests {
 
         #expect(payload.combined == nil)
     }
+
+    @Test("decodes tracking coverage and remains backward compatible")
+    func decodesTrackingCoverage() throws {
+        let json = Data("""
+        {
+          "generated": "2026-08-21T00:00:00Z",
+          "current": { "label": "Today", "cost": 0, "calls": 0, "sessions": 0, "inputTokens": 0, "outputTokens": 0 },
+          "optimize": { "findingCount": 0, "savingsUSD": 0, "topFindings": [] },
+          "history": { "daily": [] },
+          "trackingCoverage": {
+            "targetStart": "2026-01-01",
+            "targetEnd": "2026-08-21",
+            "confidence": "verified-minimum",
+            "ledger": { "path": "/tmp/ledger", "events": 190459, "revisions": 0, "invalidLines": 0 },
+            "providers": [{
+              "provider": "cursor", "label": "Cursor", "quality": "exact",
+              "eventCount": 19397, "exactTokens": 24348905735, "estimatedTokens": 0,
+              "firstSeen": "2026-01-01T00:00:00Z", "lastSeen": "2026-08-21T00:00:00Z", "lastRefresh": "2026-08-21T00:00:00Z",
+              "sources": [], "warnings": []
+            }],
+            "warnings": []
+          }
+        }
+        """.utf8)
+
+        let payload = try JSONDecoder().decode(MenubarPayload.self, from: json)
+        #expect(payload.trackingCoverage?.ledger.events == 190459)
+        #expect(payload.trackingCoverage?.providers.first?.exactTokens == 24348905735)
+    }
 }
 
 private func combinedPayloadJSON() -> Data {

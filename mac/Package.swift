@@ -13,6 +13,12 @@ let package = Package(
     products: [
         .executable(name: "CodeBurnMenubar", targets: ["CodeBurnMenubar"])
     ],
+    dependencies: [
+        // The standalone macOS 26.2 Command Line Tools bundle omits the
+        // _Testing_Foundation module metadata required by Testing.framework.
+        // Pin the official package to the installed Swift 6.2.3 toolchain.
+        .package(url: "https://github.com/swiftlang/swift-testing.git", exact: "6.2.3")
+    ],
     targets: [
         .executableTarget(
             name: "CodeBurnMenubar",
@@ -23,7 +29,10 @@ let package = Package(
         ),
         .testTarget(
             name: "CodeBurnMenubarTests",
-            dependencies: ["CodeBurnMenubar"],
+            dependencies: [
+                "CodeBurnMenubar",
+                .product(name: "Testing", package: "swift-testing")
+            ],
             path: "Tests/CodeBurnMenubarTests"
         )
     ]

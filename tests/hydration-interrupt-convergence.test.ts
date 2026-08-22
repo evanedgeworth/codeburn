@@ -64,6 +64,8 @@ async function seed(): Promise<void> {
 
   process.env['CLAUDE_CONFIG_DIR'] = base
   process.env['CODEBURN_CACHE_DIR'] = cacheDir
+  process.env['CODEBURN_USAGE_LEDGER'] = join(cacheDir, 'usage-ledger.jsonl')
+  process.env['CODEBURN_CLAUDE_HISTORY_STORE'] = join(cacheDir, 'claude-history.json')
 }
 
 /** The (date, cost) shape of the daily chart — the thing that froze empty. */

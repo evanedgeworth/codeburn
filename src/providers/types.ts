@@ -52,6 +52,13 @@ export type ParsedProviderCall = {
   projectPath?: string
   // GitHub PR URLs observed in this call's transcript (Hermes and similar).
   prLinks?: string[]
+  // Optional account/config-root provenance for imported aggregate sources.
+  // Ordinary Claude transcripts carry the same metadata on SessionSource;
+  // aggregate imports have no SessionSource file, so they attach it here.
+  sourceId?: string
+  sourceLabel?: string
+  sourcePath?: string
+  sourceKind?: 'claude-config' | 'claude-desktop'
   // Exact provider-recorded cwd, kept separately because projectPath may later
   // canonicalize a linked worktree to its main repository.
   workingDirectory?: string

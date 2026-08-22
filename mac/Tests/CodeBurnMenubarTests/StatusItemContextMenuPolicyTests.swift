@@ -1,11 +1,11 @@
 import AppKit
-import XCTest
+import Testing
 @testable import CodeBurnMenubar
 
 /// Locks the right-click menu policy that fixed flash + scroll-jump (#802).
 /// Does not drive a real NSStatusItem — that needs manual/AppKit integration.
-final class StatusItemContextMenuPolicyTests: XCTestCase {
-    func testPresentEventMaskIsRightMouseUpNotDown() {
+@Suite struct StatusItemContextMenuPolicyTests {
+    @Test func testPresentEventMaskIsRightMouseUpNotDown() {
         // Presenting on mouse-down lets the matching up dismiss the menu (flash).
         XCTAssertEqual(
             StatusItemContextMenuPolicy.presentEventMask,
@@ -20,7 +20,7 @@ final class StatusItemContextMenuPolicyTests: XCTestCase {
         XCTAssertFalse(StatusItemContextMenuPolicy.presentEventMask.contains(.rightMouseDown))
     }
 
-    func testPresentationUsesStatusItemMenuNotManualPopUp() {
+    @Test func testPresentationUsesStatusItemMenuNotManualPopUp() {
         // Manual popUp tracks against a point while the cursor sits on the status
         // item above the menu → scroll chevron / Today-row jump on mouse move.
         XCTAssertEqual(
@@ -33,7 +33,7 @@ final class StatusItemContextMenuPolicyTests: XCTestCase {
         )
     }
 
-    func testDebounceAcceptsFirstPresent() {
+    @Test func testDebounceAcceptsFirstPresent() {
         var last = Date.distantPast
         let now = Date(timeIntervalSince1970: 1_000)
         XCTAssertTrue(
@@ -42,7 +42,7 @@ final class StatusItemContextMenuPolicyTests: XCTestCase {
         XCTAssertEqual(last, now)
     }
 
-    func testDebounceRejectsWithinWindow() {
+    @Test func testDebounceRejectsWithinWindow() {
         let t0 = Date(timeIntervalSince1970: 1_000)
         var last = t0
         // Just inside the 0.3s window
@@ -53,7 +53,7 @@ final class StatusItemContextMenuPolicyTests: XCTestCase {
         XCTAssertEqual(last, t0, "reject must not advance lastPresentedAt")
     }
 
-    func testDebounceAcceptsAfterWindow() {
+    @Test func testDebounceAcceptsAfterWindow() {
         let t0 = Date(timeIntervalSince1970: 1_000)
         var last = t0
         let t1 = t0.addingTimeInterval(StatusItemContextMenuPolicy.presentDebounceSeconds + 0.001)
@@ -63,7 +63,7 @@ final class StatusItemContextMenuPolicyTests: XCTestCase {
         XCTAssertEqual(last, t1)
     }
 
-    func testDebounceBoundaryIsStrictlyGreaterThan() {
+    @Test func testDebounceBoundaryIsStrictlyGreaterThan() {
         // Gate uses `>` not `>=`: exactly debounce seconds later is still rejected.
         let t0 = Date(timeIntervalSince1970: 1_000)
         var last = t0
@@ -74,7 +74,7 @@ final class StatusItemContextMenuPolicyTests: XCTestCase {
         XCTAssertEqual(last, t0)
     }
 
-    func testCustomDebounceOverride() {
+    @Test func testCustomDebounceOverride() {
         var last = Date(timeIntervalSince1970: 0)
         let now = Date(timeIntervalSince1970: 0.5)
         XCTAssertFalse(

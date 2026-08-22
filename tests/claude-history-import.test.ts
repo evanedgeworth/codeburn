@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   buildClaudeHistoricalCalls,
   importClaudeStatsCache,
+  readClaudeHistorySnapshots,
   readClaudeHistoryStore,
 } from '../src/claude-history-import.js'
 
@@ -75,5 +76,60 @@ describe('Claude historical stats import', () => {
     parsed.dailyModelTokens[1].tokensByModel['claude-opus-test'] = 74
     await writeFile(source, JSON.stringify(parsed))
     await expect(importClaudeStatsCache(source)).rejects.toThrow('does not reconcile')
+  })
+
+  it('updates a growing stats cache within one generation without double-counting', async () => {
+    const { source } = await fixture()
+    const first = await importClaudeStatsCache(source)
+    const parsed = JSON.parse(await readFile(source, 'utf8'))
+    parsed.totalSessions = 13
+    parsed.totalMessages = 36
+    parsed.modelUsage['claude-opus-test'].inputTokens += 10
+    parsed.modelUsage['claude-opus-test'].cacheReadInputTokens += 50
+    parsed.dailyModelTokens[1].tokensByModel['claude-opus-test'] += 10
+    await writeFile(source, JSON.stringify(parsed))
+
+    const second = await importClaudeStatsCache(source)
+    const active = await readClaudeHistorySnapshots()
+    expect(second.generationId).toBe(first.generationId)
+    expect(active).toHaveLength(1)
+    expect((await buildClaudeHistoricalCalls()).exactAggregateTokens).toBe(1160)
+  })
+
+  it('preserves a reset stats cache as a new generation', async () => {
+    const { source } = await fixture()
+    const first = await importClaudeStatsCache(source)
+    const parsed = JSON.parse(await readFile(source, 'utf8'))
+    parsed.firstSessionDate = '2026-05-01T10:00:00.000Z'
+    parsed.lastComputedDate = '2026-05-01'
+    parsed.totalSessions = 1
+    parsed.totalMessages = 2
+    parsed.modelUsage['claude-opus-test'] = {
+      inputTokens: 5,
+      outputTokens: 5,
+      cacheReadInputTokens: 10,
+      cacheCreationInputTokens: 0,
+      webSearchRequests: 0,
+    }
+    parsed.dailyModelTokens = [{ date: '2026-05-01', tokensByModel: { 'claude-opus-test': 10 } }]
+    await writeFile(source, JSON.stringify(parsed))
+
+    const second = await importClaudeStatsCache(source)
+    expect(second.generationId).not.toBe(first.generationId)
+    expect(await readClaudeHistorySnapshots()).toHaveLength(2)
+    expect((await buildClaudeHistoricalCalls()).exactAggregateTokens).toBe(1120)
+  })
+
+  it('applies overlap exclusions only to the matching Claude source', async () => {
+    const { source } = await fixture()
+    await importClaudeStatsCache(source, { sourceId: 'claude-account:1', sourceLabel: 'Claude 1' })
+    await importClaudeStatsCache(source, { sourceId: 'claude-account:2', sourceLabel: 'Claude 2' })
+
+    const historical = await buildClaudeHistoricalCalls(undefined, new Map([
+      ['claude-account:1', new Set(['2026-04-28'])],
+    ]))
+    const matchingDay = historical.calls.filter(call => call.timestamp.startsWith('2026-04-28'))
+    expect(matchingDay).toHaveLength(1)
+    expect(matchingDay[0]?.sourceId).toBe('claude-account:2')
   })
 })

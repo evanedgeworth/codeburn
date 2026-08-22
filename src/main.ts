@@ -1980,29 +1980,31 @@ program
 program
   .command('claude-history-import [file]')
   .description('Import Claude stats-cache history whose token-bearing transcripts are no longer available')
+  .option('--account <label>', 'Stable opaque account label when importing more than one Claude account')
   .option('--format <format>', 'Output format: text, json', 'text')
-  .action(async (file?: string, opts?: { format?: string }) => {
+  .action(async (file?: string, opts?: { account?: string; format?: string }) => {
     const format = opts?.format ?? 'text'
     assertFormat(format, ['text', 'json'], 'claude-history-import')
     const {
       importClaudeStatsCache,
-      readClaudeHistoryStore,
+      readClaudeHistorySnapshots,
       getClaudeHistoryStorePath,
       totalStoreTokens,
     } = await import('./claude-history-import.js')
 
     if (!file) {
-      const store = await readClaudeHistoryStore()
-      const status = store ? {
-        importedAt: store.importedAt,
-        sourceName: store.sourceName,
-        firstSessionDate: store.firstSessionDate,
-        lastComputedDate: store.lastComputedDate,
-        totalSessions: store.totalSessions,
-        totalMessages: store.totalMessages,
-        days: store.dailyModelTokens.length,
-        models: Object.keys(store.modelUsage).length,
-        totalTokens: totalStoreTokens(store),
+      const snapshots = await readClaudeHistorySnapshots()
+      const status = snapshots.length > 0 ? {
+        sources: [...new Set(snapshots.map(snapshot => snapshot.sourceLabel))].sort(),
+        generations: snapshots.length,
+        firstSessionDate: snapshots.map(snapshot => snapshot.firstSessionDate).sort()[0],
+        lastComputedDate: snapshots.map(snapshot => snapshot.lastComputedDate).sort().at(-1),
+        totalSessions: snapshots.reduce((sum, snapshot) => sum + snapshot.totalSessions, 0),
+        totalMessages: snapshots.reduce((sum, snapshot) => sum + snapshot.totalMessages, 0),
+        days: snapshots.reduce((sum, snapshot) => sum + snapshot.dailyModelTokens.length, 0),
+        models: new Set(snapshots.flatMap(snapshot => Object.keys(snapshot.modelUsage))).size,
+        totalTokens: snapshots.reduce((sum, snapshot) => sum + totalStoreTokens({ version: 1, ...snapshot }), 0),
+        importedAt: snapshots.map(snapshot => snapshot.importedAt).sort().at(-1),
         storePath: getClaudeHistoryStorePath(),
       } : null
       if (format === 'json') {
@@ -2015,6 +2017,7 @@ program
         return
       }
       process.stdout.write(`\n  Claude historical tokens: ${status.totalTokens.toLocaleString()}\n`)
+      process.stdout.write(`  Sources / generations: ${status.sources.join(', ')} / ${status.generations}\n`)
       process.stdout.write(`  Coverage: ${status.firstSessionDate} to ${status.lastComputedDate}\n`)
       process.stdout.write(`  Source metadata: ${status.totalSessions.toLocaleString()} sessions, ${status.totalMessages.toLocaleString()} messages\n`)
       process.stdout.write(`  Models/days: ${status.models} / ${status.days}\n`)
@@ -2025,13 +2028,18 @@ program
     }
 
     try {
-      const result = await importClaudeStatsCache(file)
+      const account = opts?.account?.trim()
+      const result = await importClaudeStatsCache(file, account ? {
+        sourceId: `claude-account:${account}`,
+        sourceLabel: account,
+      } : undefined)
       clearSessionCache()
       if (format === 'json') {
         process.stdout.write(JSON.stringify(result, null, 2) + '\n')
         return
       }
       process.stdout.write(`\n  Imported Claude historical stats from ${result.sourceName}\n`)
+      process.stdout.write(`  Account/source: ${result.sourceLabel}\n`)
       process.stdout.write(`  Exact aggregate tokens: ${result.totalTokens.toLocaleString()}\n`)
       process.stdout.write(`  Coverage: ${result.firstSessionDate} to ${result.lastComputedDate}\n`)
       process.stdout.write(`  Source metadata: ${result.totalSessions.toLocaleString()} sessions, ${result.totalMessages.toLocaleString()} messages\n`)
@@ -2043,6 +2051,70 @@ program
       process.stderr.write(`codeburn claude-history-import: ${message}\n`)
       process.exitCode = 1
     }
+  })
+
+program
+  .command('cursor-refresh [directory]')
+  .description('Import cursor-1.csv, cursor-2.csv, and cursor-3.csv in one repeatable pass')
+  .option('--account <label>', 'Stable account label to expect (repeatable)', collect, [])
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (directory?: string, opts?: { account?: string[]; format?: string }) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'cursor-refresh')
+    try {
+      const { refreshCursorUsageDirectory } = await import('./cursor-server-import.js')
+      const accounts = opts?.account?.length ? opts.account : ['cursor-1', 'cursor-2', 'cursor-3']
+      const result = await refreshCursorUsageDirectory(directory ?? process.cwd(), accounts)
+      clearSessionCache()
+      if (format === 'json') {
+        process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+        return
+      }
+      process.stdout.write(`\n  Refreshed ${result.accounts.length} Cursor account export(s) from ${result.directory}\n`)
+      for (const account of result.accounts) {
+        process.stdout.write(`  ${account.account}: ${account.importedRows.toLocaleString()} new, ${account.duplicateRows.toLocaleString()} duplicates\n`)
+      }
+      if (result.missingAccounts.length > 0) {
+        process.stdout.write(`  Missing: ${result.missingAccounts.map(account => `${account}.csv`).join(', ')}\n`)
+        process.exitCode = 1
+      }
+      process.stdout.write('  The files may be replaced with newer full-year exports and this command safely rerun.\n\n')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      process.stderr.write(`codeburn cursor-refresh: ${message}\n`)
+      process.exitCode = 1
+    }
+  })
+
+program
+  .command('coverage')
+  .description('Show source, account, and unobserved-date coverage for token tracking')
+  .option('--from <date>', 'Coverage target start (YYYY-MM-DD)', `${new Date().getFullYear()}-01-01`)
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (opts: { from: string; format: string }) => {
+    assertFormat(opts.format, ['text', 'json'], 'coverage')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.from)) {
+      process.stderr.write('codeburn coverage: --from must be YYYY-MM-DD\n')
+      process.exitCode = 1
+      return
+    }
+    const { buildTrackingCoverage } = await import('./tracking-coverage.js')
+    const coverage = await buildTrackingCoverage(opts.from, new Date(), true)
+    if (opts.format === 'json') {
+      process.stdout.write(JSON.stringify(coverage, null, 2) + '\n')
+      return
+    }
+    process.stdout.write(`\n  Tracking confidence: ${coverage.confidence === 'complete' ? 'complete' : 'verified minimum'}\n`)
+    process.stdout.write(`  Target: ${coverage.targetStart} to ${coverage.targetEnd}\n`)
+    process.stdout.write(`  Durable ledger: ${coverage.ledger.events.toLocaleString()} events, ${coverage.ledger.revisions.toLocaleString()} revisions\n`)
+    for (const provider of coverage.providers) {
+      process.stdout.write(`\n  ${provider.label}: ${(provider.exactTokens + provider.estimatedTokens).toLocaleString()} tokens (${provider.quality})\n`)
+      for (const source of provider.sources) {
+        process.stdout.write(`    ${source.label}: ${source.tokens.toLocaleString()} tokens, ${source.firstSeen?.slice(0, 10) ?? 'none'} to ${source.lastSeen?.slice(0, 10) ?? 'none'}\n`)
+      }
+      for (const warning of provider.warnings) process.stdout.write(`    Warning: ${warning}\n`)
+    }
+    process.stdout.write('\n')
   })
 
 program

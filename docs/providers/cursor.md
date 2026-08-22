@@ -44,6 +44,13 @@ The importer requires date or timestamp and model columns, plus at least one tok
 
 Use a stable opaque `--account` label when importing more than one Cursor subscription. It namespaces deduplication across accounts while keeping repeated or overlapping exports for the same account safe. Labels are stored locally; do not use an email address.
 
+For a repeatable three-account refresh, save or rename the latest full-year
+exports as `cursor-1.csv`, `cursor-2.csv`, and `cursor-3.csv` in one directory,
+then run `codeburn cursor-refresh <directory>`. The command imports all three in
+one pass, reports any missing account, and can be safely rerun after replacing
+the files. `codeburn coverage --from 2026-01-01` reports each account separately
+and warns when an export is stale or has an unobserved range.
+
 Reconciliation rules:
 
 - Server-export totals are authoritative by local day and normalized model through the latest imported event.
@@ -54,6 +61,12 @@ Reconciliation rules:
 - The normalized store contains usage fields, timestamps, model names, and the optional usage kind. It does not copy prompts, generated text, account email, or browser credentials. The file is written privately with mode `0600`.
 
 The menubar reports the share of Cursor tokens that is server-measured and labels the remainder locally estimated. CodeBurn does not scrape browser cookies or Cursor's private APIs. Individual subscriptions use the CSV path; a future team-admin connector can use the same reconciliation layer without changing local attribution.
+
+Cursor Agent remains a separate provider. Cursor's dashboard export and local
+Cursor Agent history do not expose a shared stable event ID, so CodeBurn does
+not guess at cross-source deletion. The Tracking tab reports the possible
+overlap explicitly instead of silently removing legitimate background-agent
+work.
 
 ## Deduplication
 

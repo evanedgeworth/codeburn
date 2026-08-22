@@ -77,6 +77,20 @@ To prevent double counting, a historical day is excluded in full when a live
 Claude transcript exists on that same local day. Inspect the current import
 with `codeburn claude-history-import`.
 
+Writable scans automatically snapshot every configured `stats-cache.json`.
+Unchanged snapshots are a no-op, monotonic growth replaces the active snapshot
+for that generation, and a reset starts a new preserved generation. Use
+`CLAUDE_CONFIG_DIRS` for concurrently available profiles. For an offline export
+from another account, run `codeburn claude-history-import <file> --account
+claude-1` with a stable opaque label.
+
+Claude and Codex calls are also appended to
+`~/.config/codeburn/usage-ledger.v1.jsonl` before their source files can be
+pruned. The ledger contains token counts, timestamps, models, opaque event and
+session IDs, and source labels only. It never stores prompts, tool output, or
+commands. `codeburn coverage --from 2026-01-01` exposes the captured minimum and
+every unobserved date range instead of treating missing evidence as zero usage.
+
 ## Quirks
 
 - The parser is in `src/parser.ts`, not in `src/providers/claude.ts`. Anything that changes Claude parsing belongs in `parser.ts`.

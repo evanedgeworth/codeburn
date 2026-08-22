@@ -17,6 +17,10 @@ struct SettingsView: View {
                 .tabItem { Label("Billing", systemImage: "dollarsign.circle") }
                 .tag("billing")
 
+            TrackingSettingsTab()
+                .tabItem { Label("Tracking", systemImage: "checkmark.shield") }
+                .tag("tracking")
+
             ClaudeSettingsTab()
                 .tabItem { Label("Claude", systemImage: "brain") }
                 .tag("claude")
@@ -37,9 +41,9 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
                 .tag("about")
         }
-        // Seven tabs need extra width to render as a visible tab bar; narrower widths
+        // Eight tabs need extra width to render as a visible tab bar; narrower widths
         // make SwiftUI collapse the tab bar into a ">>" overflow menu.
-        .frame(width: 690, height: 520)
+        .frame(width: 760, height: 560)
     }
 }
 
@@ -271,6 +275,98 @@ private struct GeneralSettingsTab: View {
             CurrencyState.shared.apply(code: code, rate: fresh ?? cached, symbol: symbol)
         }
         CLICurrencyConfig.persist(code: code)
+    }
+}
+
+// MARK: - Tracking
+
+private struct TrackingSettingsTab: View {
+    @Environment(AppStore.self) private var store
+
+    private func compactTokens(_ value: Int) -> String {
+        let number = Double(value)
+        if number >= 1_000_000_000 { return String(format: "%.2fB", number / 1_000_000_000) }
+        if number >= 1_000_000 { return String(format: "%.2fM", number / 1_000_000) }
+        if number >= 1_000 { return String(format: "%.1fK", number / 1_000) }
+        return value.formatted()
+    }
+
+    private func shortDate(_ value: String?) -> String {
+        guard let value else { return "None" }
+        return String(value.prefix(10))
+    }
+
+    var body: some View {
+        Form {
+            if let coverage = store.payload.trackingCoverage {
+                Section("2026 capture confidence") {
+                    LabeledContent("Status") {
+                        Text(coverage.confidence == "complete" ? "Complete" : "Verified minimum")
+                            .foregroundStyle(coverage.confidence == "complete" ? .green : .orange)
+                    }
+                    LabeledContent("Target range") {
+                        Text("\(coverage.targetStart) through \(coverage.targetEnd)")
+                    }
+                    LabeledContent("Durable event ledger") {
+                        Text("\(coverage.ledger.events.formatted()) events, \(coverage.ledger.revisions.formatted()) revisions")
+                    }
+                    if coverage.ledger.invalidLines > 0 {
+                        Label("\(coverage.ledger.invalidLines) invalid ledger lines need review.", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                    Text("Verified minimum means every displayed token is backed by a local session, preserved aggregate, or Cursor server export. Unobserved dates are not estimated as zero and are not silently filled in.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach(coverage.providers) { provider in
+                    Section(provider.label) {
+                        LabeledContent("Captured tokens") {
+                            Text(compactTokens(provider.exactTokens + provider.estimatedTokens))
+                        }
+                        LabeledContent("Evidence quality") {
+                            Text(provider.quality.capitalized)
+                        }
+                        LabeledContent("Observed range") {
+                            Text("\(shortDate(provider.firstSeen)) through \(shortDate(provider.lastSeen))")
+                        }
+
+                        ForEach(provider.sources) { source in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(source.label).fontWeight(.medium)
+                                    Spacer()
+                                    Text(compactTokens(source.tokens)).foregroundStyle(.secondary)
+                                }
+                                Text("\(source.eventCount.formatted()) events • \(shortDate(source.firstSeen)) through \(shortDate(source.lastSeen))")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                if !source.gaps.isEmpty {
+                                    Text(source.gaps.map { "Unobserved \($0.start)–\($0.end)" }.joined(separator: ", "))
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                        }
+
+                        ForEach(provider.warnings, id: \.self) { warning in
+                            Label(warning, systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+            } else {
+                Section("Tracking coverage") {
+                    ProgressView()
+                    Text("Refresh CodeBurn to build the provider and account coverage ledger.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
     }
 }
 

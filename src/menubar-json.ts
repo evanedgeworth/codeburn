@@ -90,6 +90,7 @@ import type { GranularHistory } from './granular-history.js'
 import { getShortModelName } from './models.js'
 import type { ReworkedFile } from './workflow-insights.js'
 import type { PrRow, BranchRow } from './sessions-report.js'
+import type { TrackingCoverage } from './tracking-coverage.js'
 
 const TOP_ACTIVITIES_LIMIT = 20
 const TOP_MODELS_LIMIT = 20
@@ -344,6 +345,9 @@ export type MenubarPayload = {
   currency: { code: string; symbol: string; rate: number }
   combined?: CombinedUsage
   claudeConfigs?: ClaudeConfigSelector
+  /// Provider/account coverage health for the current calendar year. Add-only
+  /// and metadata-only; no prompts, commands, or tool output are exposed.
+  trackingCoverage?: TrackingCoverage
 }
 
 function oneShotRateFor(editTurns: number, oneShotTurns: number): number | null {
@@ -516,6 +520,7 @@ export function buildMenubarPayload(
   breakdowns?: BreakdownArrays,
   claudeConfigs?: ClaudeConfigSelector,
   granularHistory?: GranularHistory,
+  trackingCoverage?: TrackingCoverage,
 ): MenubarPayload {
   const payload: MenubarPayload = {
     generated: new Date().toISOString(),
@@ -567,5 +572,6 @@ export function buildMenubarPayload(
   if (claudeConfigs && claudeConfigs.options.length > 1) {
     payload.claudeConfigs = claudeConfigs
   }
+  if (trackingCoverage) payload.trackingCoverage = trackingCoverage
   return payload
 }

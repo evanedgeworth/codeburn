@@ -1,15 +1,15 @@
 import Foundation
-import XCTest
+import Testing
 @testable import CodeBurnMenubar
 
-final class CodexResetCreditsTests: XCTestCase {
+@Suite struct CodexResetCreditsTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func parse(_ json: String) -> CodexUsage.ResetCredits? {
         CodexSubscriptionService.parseResetCredits(data: Data(json.utf8), now: now)
     }
 
-    func testFullPayloadPicksSoonestAvailableExpiry() {
+    @Test func testFullPayloadPicksSoonestAvailableExpiry() {
         let result = parse(#"""
         {
           "credits": [
@@ -33,13 +33,13 @@ final class CodexResetCreditsTests: XCTestCase {
         )
     }
 
-    func testMissingExpiryStillReportsCount() {
+    @Test func testMissingExpiryStillReportsCount() {
         let result = parse(#"{"credits": [{"id": "c1", "status": "available"}], "available_count": 1}"#)
         XCTAssertEqual(result?.availableCount, 1)
         XCTAssertNil(result?.nextExpiresAt)
     }
 
-    func testUnknownStatusIsIgnoredForExpiryButCountIsServerAuthoritative() {
+    @Test func testUnknownStatusIsIgnoredForExpiryButCountIsServerAuthoritative() {
         let result = parse(#"""
         {
           "credits": [{"id": "c1", "status": "pending_grant", "expires_at": "2027-01-16T08:30:00Z"}],
@@ -50,7 +50,7 @@ final class CodexResetCreditsTests: XCTestCase {
         XCTAssertNil(result?.nextExpiresAt)
     }
 
-    func testAlreadyExpiredCreditDoesNotSurfaceAsNextExpiry() {
+    @Test func testAlreadyExpiredCreditDoesNotSurfaceAsNextExpiry() {
         let result = parse(#"""
         {
           "credits": [{"id": "c1", "status": "available", "expires_at": "2020-01-01T00:00:00Z"}],
@@ -61,13 +61,13 @@ final class CodexResetCreditsTests: XCTestCase {
         XCTAssertNil(result?.nextExpiresAt)
     }
 
-    func testEmptyCreditsZeroCount() {
+    @Test func testEmptyCreditsZeroCount() {
         let result = parse(#"{"credits": [], "available_count": 0}"#)
         XCTAssertEqual(result?.availableCount, 0)
         XCTAssertNil(result?.nextExpiresAt)
     }
 
-    func testMalformedDocumentReturnsNil() {
+    @Test func testMalformedDocumentReturnsNil() {
         XCTAssertNil(parse("not json"))
         XCTAssertNil(parse(#"{"credits": "wrong-shape"}"#))
         XCTAssertNil(parse(#"{"credits": []}"#))

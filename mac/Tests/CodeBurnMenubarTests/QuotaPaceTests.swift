@@ -1,8 +1,8 @@
 import Foundation
-import XCTest
+import Testing
 @testable import CodeBurnMenubar
 
-final class QuotaPaceTests: XCTestCase {
+@Suite struct QuotaPaceTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private let week = 7 * 24 * 3600
     private let fiveHours = 5 * 3600
@@ -12,7 +12,7 @@ final class QuotaPaceTests: XCTestCase {
         now.addingTimeInterval(TimeInterval(windowSeconds) * (1 - fraction))
     }
 
-    func testOnPaceMidWindow() {
+    @Test func testOnPaceMidWindow() {
         let r = QuotaPace.evaluate(
             usedPercent: 50, resetsAt: resets(afterElapsedFraction: 0.5, windowSeconds: week),
             windowSeconds: week, now: now
@@ -23,7 +23,7 @@ final class QuotaPaceTests: XCTestCase {
         XCTAssertNil(r?.hitsLimitAt)
     }
 
-    func testDeficitOverflowWeeklyGetsETABeforeReset() {
+    @Test func testDeficitOverflowWeeklyGetsETABeforeReset() {
         let resetsAt = resets(afterElapsedFraction: 0.5, windowSeconds: week)
         let r = QuotaPace.evaluate(usedPercent: 80, resetsAt: resetsAt, windowSeconds: week, now: now)
         XCTAssertEqual(r?.deltaPercent ?? 0, 30, accuracy: 0.001)
@@ -39,7 +39,7 @@ final class QuotaPaceTests: XCTestCase {
         XCTAssertLessThan(r!.hitsLimitAt!, resetsAt)
     }
 
-    func testReserveNoETA() {
+    @Test func testReserveNoETA() {
         let r = QuotaPace.evaluate(
             usedPercent: 20, resetsAt: resets(afterElapsedFraction: 0.5, windowSeconds: week),
             windowSeconds: week, now: now
@@ -50,7 +50,7 @@ final class QuotaPaceTests: XCTestCase {
         XCTAssertNil(r?.hitsLimitAt)
     }
 
-    func testShortWindowOverflowSuppressesETAButKeepsDeficit() {
+    @Test func testShortWindowOverflowSuppressesETAButKeepsDeficit() {
         let r = QuotaPace.evaluate(
             usedPercent: 90, resetsAt: resets(afterElapsedFraction: 0.5, windowSeconds: fiveHours),
             windowSeconds: fiveHours, now: now
@@ -60,14 +60,14 @@ final class QuotaPaceTests: XCTestCase {
         XCTAssertNil(r?.hitsLimitAt, "5h window must not show a linear run-out ETA")
     }
 
-    func testEarlyWindowShowsNothing() {
+    @Test func testEarlyWindowShowsNothing() {
         XCTAssertNil(QuotaPace.evaluate(
             usedPercent: 5, resetsAt: resets(afterElapsedFraction: 0.02, windowSeconds: week),
             windowSeconds: week, now: now
         ))
     }
 
-    func testSkewGuards() {
+    @Test func testSkewGuards() {
         // Reset in the past.
         XCTAssertNil(QuotaPace.evaluate(
             usedPercent: 50, resetsAt: now.addingTimeInterval(-60), windowSeconds: week, now: now
@@ -85,7 +85,7 @@ final class QuotaPaceTests: XCTestCase {
         ))
     }
 
-    func testExhaustedWindowShowsNothing() {
+    @Test func testExhaustedWindowShowsNothing() {
         XCTAssertNil(QuotaPace.evaluate(
             usedPercent: 100, resetsAt: resets(afterElapsedFraction: 0.5, windowSeconds: week),
             windowSeconds: week, now: now
@@ -97,7 +97,7 @@ final class QuotaPaceTests: XCTestCase {
         ))
     }
 
-    func testZeroUsageMidWindowIsAllReserve() {
+    @Test func testZeroUsageMidWindowIsAllReserve() {
         let r = QuotaPace.evaluate(
             usedPercent: 0, resetsAt: resets(afterElapsedFraction: 0.5, windowSeconds: week),
             windowSeconds: week, now: now

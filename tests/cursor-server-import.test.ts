@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import {
   importCursorUsageCsv,
   readCursorUsageStore,
+  refreshCursorUsageDirectory,
   reconcileCursorCalls,
 } from '../src/cursor-server-import.js'
 import type { ParsedProviderCall } from '../src/providers/types.js'
@@ -134,5 +135,19 @@ describe('Cursor server usage CSV import', () => {
     const reconciled = await reconcileCursorCalls([afterExport])
     const later = reconciled.find(call => call.deduplicationKey === 'cursor:local:later')
     expect(later).toMatchObject({ inputTokens: 100, outputTokens: 10, costIsEstimated: true })
+  })
+
+  it('refreshes stable multi-account filenames and reports missing accounts', async () => {
+    const csv = [
+      'Date,Model,Total Tokens,Cost',
+      '2026-08-20T10:00:00.000Z,cursor-auto,1234,0.00',
+    ].join('\n')
+    await writeFile(join(root, 'cursor-1.csv'), csv)
+    await writeFile(join(root, 'cursor-3.csv'), csv)
+
+    const result = await refreshCursorUsageDirectory(root)
+    expect(result.accounts.map(account => account.account)).toEqual(['cursor-1', 'cursor-3'])
+    expect(result.missingAccounts).toEqual(['cursor-2'])
+    expect((await readCursorUsageStore()).events).toHaveLength(2)
   })
 })

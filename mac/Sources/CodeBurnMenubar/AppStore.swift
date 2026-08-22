@@ -450,7 +450,8 @@ final class AppStore {
                         optimize: localPayload.optimize,
                         history: localPayload.history,
                         combined: combined,
-                        claudeConfigs: localPayload.claudeConfigs
+                        claudeConfigs: localPayload.claudeConfigs,
+                        trackingCoverage: localPayload.trackingCoverage
                     )
                 }
                 return localPayload

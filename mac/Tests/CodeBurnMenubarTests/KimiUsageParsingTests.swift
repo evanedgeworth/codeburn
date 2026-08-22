@@ -1,13 +1,14 @@
-import XCTest
+import Foundation
+import Testing
 @testable import CodeBurnMenubar
 
 /// Fixture-driven decode tests for the Kimi Code /coding/v1/usages response.
 /// The API has shipped numbers as both JSON numbers and strings, and the
 /// reset timestamp under several key spellings (resetTime / reset_at / ...),
 /// so the parser must tolerate all of them.
-final class KimiUsageParsingTests: XCTestCase {
+@Suite struct KimiUsageParsingTests {
 
-    func testParsesNumericShapeWithResetTime() throws {
+    @Test func testParsesNumericShapeWithResetTime() throws {
         let json = """
         {
           "usage": {"limit": 100, "used": 40, "remaining": 60, "resetTime": "2026-07-30T12:00:00Z"},
@@ -28,7 +29,7 @@ final class KimiUsageParsingTests: XCTestCase {
         XCTAssertEqual(usage.details.first?.usedPercent ?? -1, 50, accuracy: 0.001)
     }
 
-    func testParsesStringNumbersAndSnakeCaseReset() throws {
+    @Test func testParsesStringNumbersAndSnakeCaseReset() throws {
         let json = """
         {
           "usage": {"limit": "500", "used": "123", "remaining": "377", "reset_at": "2026-07-30T12:00:00.000Z"},
@@ -41,7 +42,7 @@ final class KimiUsageParsingTests: XCTestCase {
         XCTAssertNotNil(usage.primary?.resetsAt)
     }
 
-    func testWeeklyWindowLabel() throws {
+    @Test func testWeeklyWindowLabel() throws {
         let json = """
         {
           "limits": [
@@ -55,7 +56,7 @@ final class KimiUsageParsingTests: XCTestCase {
         XCTAssertEqual(usage.details.first?.label, "Weekly")
     }
 
-    func testEpochResetTime() throws {
+    @Test func testEpochResetTime() throws {
         let json = """
         {"usage": {"limit": 10, "used": 5, "resetTime": "1784900000"}}
         """.data(using: .utf8)!
@@ -63,7 +64,7 @@ final class KimiUsageParsingTests: XCTestCase {
         XCTAssertEqual(usage.primary?.resetsAt, Date(timeIntervalSince1970: 1_784_900_000))
     }
 
-    func testNumericEpochResetTime() throws {
+    @Test func testNumericEpochResetTime() throws {
         // A JSON number (not string) must not fail the whole decode.
         let json = """
         {"usage": {"limit": 10, "used": 5, "resetTime": 1784900000}}
@@ -72,7 +73,7 @@ final class KimiUsageParsingTests: XCTestCase {
         XCTAssertEqual(usage.primary?.resetsAt, Date(timeIntervalSince1970: 1_784_900_000))
     }
 
-    func testLiveResponseShape() {
+    @Test func testLiveResponseShape() {
         // Captured from GET https://api.kimi.com/coding/v1/usages (2026-07-23).
         let json = """
         {
@@ -100,12 +101,12 @@ final class KimiUsageParsingTests: XCTestCase {
         XCTAssertNotNil(usage.details.first?.resetsAt)
     }
 
-    func testEmptyEnvelopeThrows() {
+    @Test func testEmptyEnvelopeThrows() {
         let json = "{}".data(using: .utf8)!
         XCTAssertThrowsError(try KimiSubscriptionService.parseUsage(data: json))
     }
 
-    func testZeroLimitWindowDropped() throws {
+    @Test func testZeroLimitWindowDropped() throws {
         let json = """
         {"usage": {"limit": 0, "used": 0}, "limits": []}
         """.data(using: .utf8)!

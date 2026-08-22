@@ -37,6 +37,7 @@ import { beforeEach } from 'vitest'
 import { CLEARED, PRESERVED, REDIRECTED } from './env-isolation-vars.js'
 
 const sandbox = mkdtempSync(join(tmpdir(), 'codeburn-test-env-'))
+let stateSequence = 0
 
 const preservedSnapshot = new Map<string, string | undefined>()
 for (const key of PRESERVED) preservedSnapshot.set(key, process.env[key])
@@ -61,6 +62,13 @@ function applyIsolation(): void {
   // non-UTC TZ would otherwise shift day buckets versus a clean CI runner. A
   // test that needs a specific zone can still set process.env.TZ in beforeEach.
   process.env.TZ = 'UTC'
+  // Durable usage stores intentionally survive source pruning in production.
+  // Give each test a fresh path so one fixture's preserved events cannot be
+  // mistaken for missing history by the next fixture in the same worker.
+  const stateDir = join(sandbox, `usage-state-${stateSequence++}`)
+  process.env.CODEBURN_USAGE_LEDGER = join(stateDir, 'usage-ledger.jsonl')
+  process.env.CODEBURN_CLAUDE_HISTORY_STORE = join(stateDir, 'claude-history.json')
+  process.env.CODEBURN_TRACKING_COVERAGE_CACHE = join(stateDir, 'tracking-coverage.json')
 }
 
 applyIsolation()

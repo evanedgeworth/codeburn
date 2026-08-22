@@ -9,23 +9,26 @@ struct MenubarPayload: Codable, Sendable {
     let history: HistoryBlock
     let combined: CombinedUsage?
     let claudeConfigs: ClaudeConfigSelector?
+    let trackingCoverage: TrackingCoverage?
 
     init(generated: String,
          current: CurrentBlock,
          optimize: OptimizeBlock,
          history: HistoryBlock,
          combined: CombinedUsage?,
-         claudeConfigs: ClaudeConfigSelector? = nil) {
+         claudeConfigs: ClaudeConfigSelector? = nil,
+         trackingCoverage: TrackingCoverage? = nil) {
         self.generated = generated
         self.current = current
         self.optimize = optimize
         self.history = history
         self.combined = combined
         self.claudeConfigs = claudeConfigs
+        self.trackingCoverage = trackingCoverage
     }
 
     enum CodingKeys: String, CodingKey {
-        case generated, current, optimize, history, combined, claudeConfigs
+        case generated, current, optimize, history, combined, claudeConfigs, trackingCoverage
     }
 
     init(from decoder: Decoder) throws {
@@ -36,7 +39,58 @@ struct MenubarPayload: Codable, Sendable {
         history = try c.decode(HistoryBlock.self, forKey: .history)
         combined = try c.decodeIfPresent(CombinedUsage.self, forKey: .combined)
         claudeConfigs = try c.decodeIfPresent(ClaudeConfigSelector.self, forKey: .claudeConfigs)
+        trackingCoverage = try c.decodeIfPresent(TrackingCoverage.self, forKey: .trackingCoverage)
     }
+}
+
+struct TrackingCoverage: Codable, Sendable {
+    let targetStart: String
+    let targetEnd: String
+    let confidence: String
+    let ledger: TrackingLedgerSummary
+    let providers: [ProviderTrackingCoverage]
+    let warnings: [String]
+}
+
+struct TrackingLedgerSummary: Codable, Sendable {
+    let path: String
+    let events: Int
+    let revisions: Int
+    let invalidLines: Int
+}
+
+struct TrackingGap: Codable, Identifiable, Sendable {
+    var id: String { "\(start)-\(end)" }
+    let start: String
+    let end: String
+    let kind: String
+}
+
+struct TrackingSourceCoverage: Codable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let kind: String
+    let eventCount: Int
+    let tokens: Int
+    let firstSeen: String?
+    let lastSeen: String?
+    let lastRefresh: String?
+    let gaps: [TrackingGap]
+}
+
+struct ProviderTrackingCoverage: Codable, Identifiable, Sendable {
+    var id: String { provider }
+    let provider: String
+    let label: String
+    let quality: String
+    let eventCount: Int
+    let exactTokens: Int
+    let estimatedTokens: Int
+    let firstSeen: String?
+    let lastSeen: String?
+    let lastRefresh: String?
+    let sources: [TrackingSourceCoverage]
+    let warnings: [String]
 }
 
 struct ClaudeConfigSelector: Codable, Sendable {

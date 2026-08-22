@@ -8,7 +8,7 @@ import { normalizeContentBlocks, flatSlice, flatString } from './content-utils.j
 import { discoverAllSessions, getProvider } from './providers/index.js'
 import { flushCodexCache, readCachedCodexResults, withCodexCacheDirectory, writeCachedCodexResults } from './codex-cache.js'
 import { antigravityCascadeIdFromPath, flushAntigravityCache, shouldReparseAntigravitySource } from './providers/antigravity.js'
-import { getClaudeConfigDirs, getDesktopSessionsDirs } from './providers/claude.js'
+import { discoverClaudeConfigSources, getClaudeConfigDirs, getDesktopSessionsDirs } from './providers/claude.js'
 import { isSqliteBusyError } from './sqlite.js'
 import { getCodeburnCacheDir } from './cache-dir.js'
 import {
@@ -54,7 +54,15 @@ import type {
 import { classifyTurn, BASH_TOOLS, EDIT_TOOLS } from './classifier.js'
 import { extractBashCommands } from './bash-utils.js'
 import { getCursorUsageStoreHash } from './cursor-server-import.js'
-import { buildClaudeHistoricalCalls, getClaudeHistoryStoreHash } from './claude-history-import.js'
+import { buildClaudeHistoricalCalls, getClaudeHistoryStoreHash, snapshotClaudeStatsCaches } from './claude-history-import.js'
+import {
+  getUsageLedgerHash,
+  readUsageLedger,
+  recordInRange,
+  sourceMetadataForRecord,
+  syncUsageLedger,
+  type UsageLedgerRecord,
+} from './usage-ledger.js'
 
 function unsanitizePath(dirName: string): string {
   return dirName.replace(/-/g, '/')
@@ -2431,6 +2439,82 @@ function summarizeProject(project: string, projectPath: string, sessions: Sessio
   }
 }
 
+function usageLedgerLiveSessions(projects: ProjectSummary[]): Set<string> {
+  const sessions = new Set<string>()
+  for (const project of projects) for (const session of project.sessions) {
+    for (const turn of session.turns) for (const call of turn.assistantCalls) {
+      if (call.provider !== 'claude' && call.provider !== 'codex') continue
+      sessions.add(`${call.provider}\u0000${session.sessionId}`)
+    }
+  }
+  return sessions
+}
+
+function usageLedgerCall(record: UsageLedgerRecord): ParsedProviderCall {
+  return {
+    provider: record.provider,
+    model: record.model,
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    cacheCreationInputTokens: record.cacheWriteTokens,
+    cacheReadInputTokens: record.cacheReadTokens,
+    cachedInputTokens: record.cachedInputTokens,
+    reasoningTokens: record.reasoningTokens,
+    webSearchRequests: record.webSearchRequests,
+    costUSD: record.costUSD,
+    costIsEstimated: record.estimated,
+    tools: [],
+    bashCommands: [],
+    timestamp: record.timestamp,
+    speed: 'standard',
+    deduplicationKey: record.deduplicationKey,
+    userMessage: 'Recovered from CodeBurn durable token ledger',
+    sessionId: record.sessionId,
+    project: record.project,
+    projectPath: record.projectPath,
+  }
+}
+
+/**
+ * Restore token-only records whose provider source has disappeared. The ledger
+ * deliberately cannot restore prompts, tools, categories, or PR attribution;
+ * it restores only the accounting fields that would otherwise become zero.
+ */
+async function missingUsageLedgerProjects(
+  liveProjects: ProjectSummary[],
+  dateRange?: DateRange,
+  providerFilter?: string,
+): Promise<ProjectSummary[]> {
+  const liveSessions = usageLedgerLiveSessions(liveProjects)
+  const { records } = await readUsageLedger()
+  const inScope = records.filter(record =>
+    !liveSessions.has(`${record.provider}\u0000${record.sessionId}`)
+    && recordInRange(record, dateRange)
+    && (!providerFilter || providerFilter === 'all' || providerFilter === record.provider)
+  )
+  const groups = new Map<string, UsageLedgerRecord[]>()
+  for (const record of inScope) {
+    const key = `${record.provider}\u0000${record.sourceId}\u0000${record.projectPath}\u0000${record.sessionId}`
+    const group = groups.get(key) ?? []
+    group.push(record)
+    groups.set(key, group)
+  }
+
+  const projectGroups = new Map<string, { project: string; projectPath: string; sessions: SessionSummary[] }>()
+  for (const records of groups.values()) {
+    records.sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.eventId.localeCompare(b.eventId))
+    const first = records[0]!
+    const turns = records.map(record => classifyTurn(providerCallToTurn(usageLedgerCall(record))))
+    const source = sourceMetadataForRecord(first)
+    const session = buildSessionSummary(`ledger:${first.sourceId}:${first.sessionId}`, first.project, turns, [], source)
+    const key = `${first.projectPath}\u0000${first.project}`
+    const project = projectGroups.get(key) ?? { project: first.project, projectPath: first.projectPath, sessions: [] }
+    project.sessions.push(session)
+    projectGroups.set(key, project)
+  }
+  return [...projectGroups.values()].map(group => summarizeProject(group.project, group.projectPath, group.sessions))
+}
+
 // Provider-neutral explicit-reference capture. Every saved provider session
 // passes through this boundary. Full URLs only: a bare "#123" is repository-
 // ambiguous and must never silently move spend between repositories.
@@ -3508,7 +3592,7 @@ function cacheKey(dateRange: DateRange | undefined, providerFilter: string | und
   // Pricing-affecting config participates so a memoized parse (exact-key or
   // burst-reused in a resident serve process) can never present costs priced
   // under aliases/overrides/savings the user has since changed.
-  return `${s}:${providerFilter ?? 'all'}:${claudeRoots}:${getProxyPathsConfigHash()}:${getModelAliasesConfigHash()}:${getPriceOverridesConfigHash()}:${getLocalModelSavingsConfigHash()}:cursorUsage=${getCursorUsageStoreHash()}:claudeHistory=${getClaudeHistoryStoreHash()}`
+  return `${s}:${providerFilter ?? 'all'}:${claudeRoots}:${getProxyPathsConfigHash()}:${getModelAliasesConfigHash()}:${getPriceOverridesConfigHash()}:${getLocalModelSavingsConfigHash()}:cursorUsage=${getCursorUsageStoreHash()}:claudeHistory=${getClaudeHistoryStoreHash()}:usageLedger=${getUsageLedgerHash()}`
 }
 
 export function clearSessionCache(): void {
@@ -4081,6 +4165,14 @@ async function runParse(
   readOnlyServedStale = false
   const seenMsgIds = new Set<string>()
   const seenKeys = new Set<string>()
+  const claudeInRequestedScope = !providerFilter || providerFilter === 'all' || providerFilter === 'claude'
+  if (!readOnly && claudeInRequestedScope) {
+    try { await snapshotClaudeStatsCaches(await discoverClaudeConfigSources()) }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      process.stderr.write(`codeburn: could not snapshot Claude stats cache (${message})\n`)
+    }
+  }
   const allSources = await discoverAllSessions(providerFilter)
 
   const claudeSources = allSources.filter(s => s.provider === 'claude')
@@ -4133,7 +4225,7 @@ async function runParse(
   // it into the result. Note this is deliberately NOT a `claudeDirs.length > 0` check:
   // when claude IS in scope but every transcript has been pruned from disk, that
   // orphan pass is exactly what keeps PR-attributed spend from vanishing.
-  const claudeInScope = !providerFilter || providerFilter === 'all' || providerFilter === 'claude'
+  const claudeInScope = claudeInRequestedScope
   if (claudeSources.length > 0) emitScanProgress({ kind: 'provider', provider: 'claude', state: 'start' })
   let claudeProjects: ProjectSummary[] = []
   if (claudeInScope) {
@@ -4153,31 +4245,55 @@ async function runParse(
   // live transcript exists on the same local day, exclude the historical day in
   // full: double-counting would be worse than the explicitly reported gap.
   if (claudeInScope) {
-    const liveClaudeDays = new Set<string>()
+    const liveClaudeDays = new Map<string, Set<string>>()
     for (const project of claudeProjects) {
       for (const session of project.sessions) {
         for (const turn of session.turns) {
-          if (turn.assistantCalls.some(call => call.provider === 'claude')) liveClaudeDays.add(dateKey(turn.timestamp))
+          if (!turn.assistantCalls.some(call => call.provider === 'claude')) continue
+          const sourceId = session.source?.id
+          if (!sourceId) continue
+          const days = liveClaudeDays.get(sourceId) ?? new Set<string>()
+          days.add(dateKey(turn.timestamp))
+          liveClaudeDays.set(sourceId, days)
         }
       }
     }
     const historical = await buildClaudeHistoricalCalls(dateRange, liveClaudeDays)
     if (historical.calls.length > 0) {
-      const project = historical.calls[0]!.project ?? 'Claude historical aggregate'
-      const projectPath = historical.calls[0]!.projectPath ?? '.claude'
-      const callsByDay = new Map<string, ParsedProviderCall[]>()
+      const callsByProjectAndDay = new Map<string, ParsedProviderCall[]>()
       for (const call of historical.calls) {
         const day = dateKey(call.timestamp)
-        const existing = callsByDay.get(day) ?? []
+        const project = call.project ?? 'Claude historical aggregate'
+        const projectPath = call.projectPath ?? '.claude'
+        const key = `${projectPath}\u0000${project}\u0000${call.sourceId ?? 'unknown'}\u0000${call.sessionId}\u0000${day}`
+        const existing = callsByProjectAndDay.get(key) ?? []
         existing.push(call)
-        callsByDay.set(day, existing)
+        callsByProjectAndDay.set(key, existing)
       }
-      const sessions = [...callsByDay.entries()].map(([day, calls]) => buildSessionSummary(
-        `claude-history:${day}`,
-        project,
-        calls.map(call => classifyTurn(providerCallToTurn(call))),
-      ))
-      claudeProjects.push(summarizeProject(project, projectPath, sessions))
+      const sessionsByProject = new Map<string, ReturnType<typeof buildSessionSummary>[]>()
+      for (const calls of callsByProjectAndDay.values()) {
+        const first = calls[0]!
+        const project = first.project ?? 'Claude historical aggregate'
+        const projectPath = first.projectPath ?? '.claude'
+        const source = first.sourceId && first.sourceLabel && first.sourcePath && first.sourceKind
+          ? { id: first.sourceId, label: first.sourceLabel, path: first.sourcePath, kind: first.sourceKind }
+          : undefined
+        const session = buildSessionSummary(
+          first.sessionId,
+          project,
+          calls.map(call => classifyTurn(providerCallToTurn(call))),
+          [],
+          source,
+        )
+        const key = `${projectPath}\u0000${project}`
+        const sessions = sessionsByProject.get(key) ?? []
+        sessions.push(session)
+        sessionsByProject.set(key, sessions)
+      }
+      for (const [key, sessions] of sessionsByProject) {
+        const [projectPath, project] = key.split('\u0000') as [string, string]
+        claudeProjects.push(summarizeProject(project, projectPath, sessions))
+      }
     }
     if (historical.excludedOverlapDays.length > 0) {
       process.stderr.write(
@@ -4269,7 +4385,13 @@ async function runParse(
     return { ...p, project: projectNameFromPath(canonical.path, p.project), projectPath: canonical.path }
   }))
 
-  const mergedMap = mergeProjectsByCrossProviderKey([...claudeProjects, ...resolvedOtherProjects])
+  const liveProjects = [...claudeProjects, ...resolvedOtherProjects]
+  // Persist exact token metadata before any source-retention cleanup can erase
+  // it. A read-only lock fallback must never publish its potentially stale
+  // snapshot; the current writer will perform this sync when it finishes.
+  if (!readOnly) await syncUsageLedger(liveProjects)
+  const ledgerProjects = await missingUsageLedgerProjects(liveProjects, dateRange, providerFilter)
+  const mergedMap = mergeProjectsByCrossProviderKey([...liveProjects, ...ledgerProjects])
 
   // Re-derive proxy attribution on the merged total: the merge above sums
   // totalCostUSD across providers that share a canonical path but never

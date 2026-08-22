@@ -1,14 +1,14 @@
 import Foundation
-import XCTest
+import Testing
 @testable import CodeBurnMenubar
 
 /// `plan_type` parsing and the credit-metered branch of the wham/usage decoder.
-final class CodexPlanParsingTests: XCTestCase {
+@Suite struct CodexPlanParsingTests {
     private func decode(_ json: String) throws -> CodexUsage {
         try CodexSubscriptionService.decodeUsage(data: Data(json.utf8))
     }
 
-    func testKnownTiersMapToDisplayNames() {
+    @Test func testKnownTiersMapToDisplayNames() {
         let expected: [String: String] = [
             "guest": "Guest", "free": "Free", "go": "Go", "plus": "Plus", "pro": "Pro",
             "prolite": "Pro Lite", "pro_lite": "Pro Lite", "pro-lite": "Pro Lite",
@@ -21,24 +21,24 @@ final class CodexPlanParsingTests: XCTestCase {
         }
     }
 
-    func testTierMatchingIsCaseInsensitive() {
+    @Test func testTierMatchingIsCaseInsensitive() {
         XCTAssertEqual(CodexUsage.planType(from: "pLuS"), .plus)
         XCTAssertEqual(CodexUsage.planType(from: "ENTERPRISE"), .enterprise)
     }
 
-    func testCreditBasedPricingCompositesNormalize() {
+    @Test func testCreditBasedPricingCompositesNormalize() {
         XCTAssertEqual(CodexUsage.planType(from: "enterprise_cbp_usage_based"), .enterprise)
         XCTAssertEqual(CodexUsage.planType(from: "self_serve_business_usage_based"), .business)
         XCTAssertEqual(CodexUsage.planType(from: "business_cbp"), .business)
     }
 
-    func testHyphenSeparatedCompositesNormalizeToo() {
+    @Test func testHyphenSeparatedCompositesNormalizeToo() {
         XCTAssertEqual(CodexUsage.planType(from: "enterprise-cbp-usage-based"), .enterprise)
         XCTAssertEqual(CodexUsage.planType(from: "self-serve-business-usage-based"), .business)
         XCTAssertEqual(CodexUsage.planType(from: "business-cbp"), .business)
     }
 
-    func testUnknownTierNormalizesAndTitleCasesLikeTheDesktopDecoder() {
+    @Test func testUnknownTierNormalizesAndTitleCasesLikeTheDesktopDecoder() {
         XCTAssertEqual(CodexUsage.planType(from: "some_future_tier_usage_based"),
                        .unknown("some_future_tier"))
         XCTAssertEqual(CodexUsage.planType(from: "some_future_tier_usage_based").displayName,
@@ -75,7 +75,7 @@ final class CodexPlanParsingTests: XCTestCase {
     }
     """#
 
-    func testEnterprisePayloadDecodesTheSpendControlLimit() throws {
+    @Test func testEnterprisePayloadDecodesTheSpendControlLimit() throws {
         let usage = try decode(enterprisePayload)
         XCTAssertNil(usage.primary)
         XCTAssertNil(usage.secondary)
@@ -96,7 +96,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertFalse(usage.creditsUnlimited)
     }
 
-    func testSpendControlIsReadAtEveryObservedPosition() throws {
+    @Test func testSpendControlIsReadAtEveryObservedPosition() throws {
         let bodies = [
             #"{"spend_control": {"individual_limit": {"limit": 10000, "used_percent": 25}}}"#,
             #"{"spend_control": {"individualLimit": {"limit": 10000, "usedPercent": 25}}}"#,
@@ -110,7 +110,7 @@ final class CodexPlanParsingTests: XCTestCase {
         }
     }
 
-    func testPercentFallsBackThroughRemainingPercentThenRawRatio() throws {
+    @Test func testPercentFallsBackThroughRemainingPercentThenRawRatio() throws {
         let fromRemaining = try XCTUnwrap(
             decode(#"{"spend_control": {"individual_limit": {"limit": 10000, "remaining_percent": 70}}}"#).creditLimit)
         XCTAssertEqual(fromRemaining.usedPercent, 30, accuracy: 0.0001)
@@ -120,7 +120,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertEqual(fromRatio.usedPercent, 25, accuracy: 0.0001)
     }
 
-    func testUnusableSpendControlYieldsNoRow() throws {
+    @Test func testUnusableSpendControlYieldsNoRow() throws {
         let bodies = [
             #"{"spend_control": {"individual_limit": {"limit": 0, "used": 5}}}"#,
             #"{"spend_control": {"individual_limit": {"limit": null}}}"#,
@@ -134,12 +134,12 @@ final class CodexPlanParsingTests: XCTestCase {
         }
     }
 
-    func testAllowanceWithoutAnyUsageSignalYieldsNoRow() throws {
+    @Test func testAllowanceWithoutAnyUsageSignalYieldsNoRow() throws {
         let body = #"{"spend_control": {"individual_limit": {"limit": 10000, "reset_at": 1785542400}}}"#
         XCTAssertNil(try decode(body).creditLimit)
     }
 
-    func testBlankNumericStringIsAbsentNotZero() throws {
+    @Test func testBlankNumericStringIsAbsentNotZero() throws {
         let credits = try XCTUnwrap(decode(#"""
         {"spend_control": {"individual_limit": {"limit": "10000", "used": "  ", "used_percent": 30}}}
         """#).creditLimit)
@@ -147,7 +147,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertNil(try decode(#"{"spend_control": {"individual_limit": {"limit": ""}}}"#).creditLimit)
     }
 
-    func testOverageKeepsCountsTruthfulWhileClampingPercent() throws {
+    @Test func testOverageKeepsCountsTruthfulWhileClampingPercent() throws {
         let credits = try XCTUnwrap(decode(#"""
         {"spend_control": {"individual_limit": {"limit": 10000, "used": 12000, "used_percent": 120}}}
         """#).creditLimit)
@@ -155,13 +155,13 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertEqual(credits.usedPercent, 100)
     }
 
-    func testMonthWindowIsTimezoneIndependent() throws {
+    @Test func testMonthWindowIsTimezoneIndependent() throws {
         // 2026-03-01Z reads as 28 days in UTC but 31 through a local calendar.
         let body = #"{"spend_control": {"individual_limit": {"limit": 100, "used_percent": 10, "reset_at": 1772323200}}}"#
         XCTAssertEqual(try XCTUnwrap(decode(body).creditLimit?.windowSeconds), 28 * 86_400)
     }
 
-    func testOutOfRangeNumbersDoNotTrap() throws {
+    @Test func testOutOfRangeNumbersDoNotTrap() throws {
         // `Int(_:)` on 1e100 traps, and a trap is not a catchable error.
         for body in [
             #"{"spend_control": {"individual_limit": {"limit": 100, "used_percent": 10, "reset_at": 1e100}}}"#,
@@ -174,7 +174,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertNil(try XCTUnwrap(decode(huge).creditLimit).resetsAt)
     }
 
-    func testPercentOnlyOverageKeepsTheImpliedCount() throws {
+    @Test func testPercentOnlyOverageKeepsTheImpliedCount() throws {
         let body = #"{"spend_control": {"individual_limit": {"limit": 10000, "used_percent": 120}}}"#
         let credits = try XCTUnwrap(decode(body).creditLimit)
         XCTAssertEqual(credits.used, 12000, accuracy: 0.001)
@@ -182,7 +182,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertEqual(credits.displayLabel, "Monthly usage limit · 12,000 / 10,000 credits")
     }
 
-    func testOneMalformedAdditionalLimitDoesNotDiscardTheRest() throws {
+    @Test func testOneMalformedAdditionalLimitDoesNotDiscardTheRest() throws {
         let body = #"""
         {"additional_rate_limits": [
           null,
@@ -192,7 +192,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertEqual(try decode(body).additionalLimits.map(\.name), ["Spark"])
     }
 
-    func testReachedSpendControlIsCarriedThrough() throws {
+    @Test func testReachedSpendControlIsCarriedThrough() throws {
         let credits = try XCTUnwrap(decode(#"""
         {"spend_control": {"reached": true, "individual_limit": {"limit": 10000, "used_percent": 100}}}
         """#).creditLimit)
@@ -200,7 +200,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertEqual(credits.usedPercent, 100)
     }
 
-    func testCreditFlagsAndMixedNumberEncodings() throws {
+    @Test func testCreditFlagsAndMixedNumberEncodings() throws {
         let usage = try decode(#"""
         {"credits": {"has_credits": true, "unlimited": true, "balance": "3410.40"}}
         """#)
@@ -209,7 +209,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(usage.creditsBalance), 3410.40, accuracy: 0.0001)
     }
 
-    func testRateWindowsStillDecodeAlongsideASpendControl() throws {
+    @Test func testRateWindowsStillDecodeAlongsideASpendControl() throws {
         let usage = try decode(#"""
         {
           "plan_type": "plus",
@@ -224,7 +224,7 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertEqual(usage.creditLimit?.usedPercent, 30)
     }
 
-    func testOnlyAZeroCountSkipsTheCompanionRequest() {
+    @Test func testOnlyAZeroCountSkipsTheCompanionRequest() {
         let zero = #"{"rate_limit_reset_credits": {"available_count": 0}}"#
         let some = #"{"rate_limit_reset_credits": {"available_count": 3}}"#
         XCTAssertEqual(CodexSubscriptionService.inlineResetCreditsShortcut(data: Data(zero.utf8))?.availableCount, 0)
@@ -233,13 +233,13 @@ final class CodexPlanParsingTests: XCTestCase {
         XCTAssertEqual(CodexSubscriptionService.inlineResetCredits(data: Data(some.utf8))?.availableCount, 3)
     }
 
-    func testInlineResetCreditsParseFromTheUsagePayload() {
+    @Test func testInlineResetCreditsParseFromTheUsagePayload() {
         let inline = CodexSubscriptionService.inlineResetCredits(data: Data(enterprisePayload.utf8))
         XCTAssertEqual(inline?.availableCount, 0)
         XCTAssertNil(inline?.nextExpiresAt)
     }
 
-    func testInlineResetCreditsAbsentSignalsFallback() {
+    @Test func testInlineResetCreditsAbsentSignalsFallback() {
         XCTAssertNil(CodexSubscriptionService.inlineResetCredits(data: Data("{}".utf8)))
         XCTAssertNil(CodexSubscriptionService.inlineResetCredits(data: Data("not json".utf8)))
         XCTAssertNil(CodexSubscriptionService.inlineResetCredits(

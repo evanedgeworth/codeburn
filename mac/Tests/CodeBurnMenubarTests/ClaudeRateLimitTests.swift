@@ -1,9 +1,9 @@
 import Foundation
-import XCTest
+import Testing
 @testable import CodeBurnMenubar
 
-final class ClaudeRateLimitTests: XCTestCase {
-    func testRetryAfterDeltaSeconds() {
+@Suite struct ClaudeRateLimitTests {
+    @Test func testRetryAfterDeltaSeconds() {
         XCTAssertEqual(
             ClaudeSubscriptionService.parseRetryAfter(
                 header: " 42 ",
@@ -13,7 +13,7 @@ final class ClaudeRateLimitTests: XCTestCase {
         )
     }
 
-    func testRetryAfterHTTPDate() {
+    @Test func testRetryAfterHTTPDate() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
 
         XCTAssertEqual(
@@ -26,7 +26,7 @@ final class ClaudeRateLimitTests: XCTestCase {
         )
     }
 
-    func testMalformedHeaderFallsBackToBody() {
+    @Test func testMalformedHeaderFallsBackToBody() {
         XCTAssertEqual(
             ClaudeSubscriptionService.parseRetryAfter(
                 header: "not-a-retry-after",
@@ -36,7 +36,7 @@ final class ClaudeRateLimitTests: XCTestCase {
         )
     }
 
-    func testMalformedHeaderAndBodyUseDefault() {
+    @Test func testMalformedHeaderAndBodyUseDefault() {
         XCTAssertEqual(
             ClaudeSubscriptionService.parseRetryAfter(
                 header: "not-a-retry-after",
@@ -46,7 +46,7 @@ final class ClaudeRateLimitTests: XCTestCase {
         )
     }
 
-    func testRateLimitBlockNeverShrinks() {
+    @Test func testRateLimitBlockNeverShrinks() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let existing = now.addingTimeInterval(600)
 
@@ -68,7 +68,7 @@ final class ClaudeRateLimitTests: XCTestCase {
         )
     }
 
-    func testFailureBackoffGrowsAndCapsAtCadence() {
+    @Test func testFailureBackoffGrowsAndCapsAtCadence() {
         let delays = (1...5).map {
             SubscriptionRefreshBackoff.delay(
                 failureCount: $0,
@@ -81,7 +81,7 @@ final class ClaudeRateLimitTests: XCTestCase {
         XCTAssertEqual(delays, delays.sorted())
     }
 
-    func testFailureBackoffJitterStaysWithinBounds() {
+    @Test func testFailureBackoffJitterStaysWithinBounds() {
         let minimum = SubscriptionRefreshBackoff.delay(
             failureCount: 2,
             cadence: 300,

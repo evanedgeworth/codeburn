@@ -459,7 +459,9 @@ Run `codeburn` for the dashboard, or use a subcommand below. Most commands also 
 | `codeburn export` | CSV covering today, 7 days, and 30 days |
 | `codeburn export -f json` | Export as JSON instead of CSV |
 | `codeburn cursor-import <csv> [--account cursor-1]` | Reconcile local Cursor sessions with a Cursor dashboard usage export; use a stable opaque account label for multiple subscriptions |
-| `codeburn claude-history-import [stats-cache.json]` | Recover exact aggregate Claude token components after source transcripts were pruned; daily cache allocation is labeled estimated |
+| `codeburn cursor-refresh <directory>` | Re-import `cursor-1.csv`, `cursor-2.csv`, and `cursor-3.csv` together; full-year exports are safe to replace and rerun |
+| `codeburn claude-history-import [stats-cache.json] [--account claude-1]` | Recover exact aggregate Claude token components after source transcripts were pruned; daily cache allocation is labeled estimated |
+| `codeburn coverage [--from YYYY-MM-DD]` | Audit provider/account sources, durable events, refresh age, and unobserved date ranges |
 
 **Sync (team telemetry)** _preview_
 
@@ -698,9 +700,9 @@ These are starting points, not verdicts. A 60% cache hit on a single experimenta
 
 | Provider | Data location | Notes |
 |----------|---------------|-------|
-| **Claude Code** | `~/.claude/projects/<sanitized-path>/<session-id>.jsonl` | Each assistant entry carries model name, token usage (input, output, cache read, cache write), `tool_use` blocks, and timestamps. |
+| **Claude Code** | `~/.claude/projects/<sanitized-path>/<session-id>.jsonl`; metadata-only ledger at `~/.config/codeburn/usage-ledger.v1.jsonl` | Each assistant entry carries model name, token usage (input, output, cache read, cache write), `tool_use` blocks, and timestamps. Preserved ledger rows never copy prompts, tool output, or commands. |
 | **Claude (multiple config dirs)** | Set via `CLAUDE_CONFIG_DIRS` (e.g. `~/.claude-work:~/.claude-personal`) | Scans every listed directory and merges sessions into one row per project so totals reflect all your Claude usage. Use `:` on POSIX, `;` on Windows; overrides `CLAUDE_CONFIG_DIR`. Missing or unreadable directories are skipped. |
-| **Codex (OpenAI)** | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, `~/.codex/archived_sessions/rollout-*.jsonl` | Reads `token_count` events (per-call and cumulative usage) and `function_call` entries for tool tracking; attributes cost by project working directory. `codeburn report --provider codex` views Codex alone. |
+| **Codex (OpenAI)** | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, `~/.codex/archived_sessions/rollout-*.jsonl`; metadata-only ledger at `~/.config/codeburn/usage-ledger.v1.jsonl` | Reads `token_count` events and function calls; preserves token metadata before source pruning without copying prompts, tool output, or commands. `codeburn report --provider codex` views Codex alone. |
 | **Cursor** | SQLite `state.vscdb` under `globalStorage`: macOS `~/Library/Application Support/Cursor/User/globalStorage/`, Linux `~/.config/Cursor/User/globalStorage/`, Windows `%APPDATA%/Cursor/User/globalStorage/`; optional normalized dashboard exports at `~/.config/codeburn/cursor-usage.json`; results cached at `~/.cache/codeburn/cursor-results.v<n>.json` | Local input tokens come from Cursor's per-conversation context meter; tool calls and shell commands come from the agent stream. Output and server-side cache tokens are not present locally, so local-only figures remain estimated. Run `codeburn cursor-import <usage.csv>` to make exported server tokens and cost authoritative for covered periods while retaining local project, session, and tool attribution. Overlapping exports deduplicate automatically. |
 | **OpenCode** | SQLite `~/.local/share/opencode/opencode*.db` or file-based `~/.local/share/opencode/storage/` (respects `XDG_DATA_HOME`; `OPENCODE_DATA_DIR`/`OPENCODE_DB_PREFIX` for renamed/forked builds) | Queries `session`, `message`, and `part` read-only and recalculates cost via LiteLLM (falling back to OpenCode's own cost field for unpriced models). Subtask sessions (`parent_id IS NOT NULL`) are excluded to avoid double counting; multiple channel databases are supported. |
 | **Gemini CLI** | `~/.gemini/tmp/<project>/chats/session-*.json` | One JSON file per session with real token counts (input, output, cached, thoughts) per message, so no estimation is needed. Input is reported inclusive of cached, so CodeBurn subtracts cached before pricing to avoid double charging. |

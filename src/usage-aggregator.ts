@@ -16,6 +16,7 @@ import { getDaysInRange, ensureCacheHydrated, emptyCache, BACKFILL_DAYS, toDateS
 import { buildGranularHistory } from './granular-history.js'
 import { buildCursorTrackingCoverage, getCursorUsageStoreHash } from './cursor-server-import.js'
 import { getClaudeHistoryStoreHash } from './claude-history-import.js'
+import { buildTrackingCoverage } from './tracking-coverage.js'
 
 // Row caps for the by-PR / by-branch payload aggregations, ranked by cost.
 const TOP_BRANCHES = 15
@@ -955,5 +956,6 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   const optimize = opts.optimize === false ? null : await scanAndDetect(scanProjects, scanRange, opts.provider)
   const granularRange = opts.daysSelection?.range ?? scanRange
   const granularHistory = opts.timeline === false ? undefined : buildGranularHistory(scanProjects, granularRange)
-  return buildMenubarPayload(currentData, providers, optimize, dailyHistory, retryTax, routingWaste, breakdowns, claudeConfigs, granularHistory)
+  const trackingCoverage = await buildTrackingCoverage(`${now.getFullYear()}-01-01`, now)
+  return buildMenubarPayload(currentData, providers, optimize, dailyHistory, retryTax, routingWaste, breakdowns, claudeConfigs, granularHistory, trackingCoverage)
 }

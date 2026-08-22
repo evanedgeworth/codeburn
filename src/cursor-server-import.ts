@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -49,6 +49,12 @@ export type CursorImportResult = {
   coverageStart: string | null
   coverageEnd: string | null
   storePath: string
+}
+
+export type CursorRefreshResult = {
+  directory: string
+  accounts: CursorImportResult[]
+  missingAccounts: string[]
 }
 
 export type CursorTrackingCoverage = {
@@ -328,6 +334,31 @@ export async function importCursorUsageCsv(filePath: string, options?: { account
     coverageEnd: events.at(-1)?.timestamp ?? null,
     storePath: getCursorUsageStorePath(),
   }
+}
+
+/**
+ * Refresh all stable Cursor account labels in one pass. Files are deliberately
+ * named by opaque label (for example cursor-1.csv), so CodeBurn never needs an
+ * email address, browser cookie, or account credential to keep accounts apart.
+ */
+export async function refreshCursorUsageDirectory(
+  directory: string,
+  accounts = ['cursor-1', 'cursor-2', 'cursor-3'],
+): Promise<CursorRefreshResult> {
+  const entries = new Set(await readdir(directory))
+  const results: CursorImportResult[] = []
+  const missingAccounts: string[] = []
+  for (const rawAccount of accounts) {
+    const account = rawAccount.trim()
+    if (!account) continue
+    const fileName = `${account}.csv`
+    if (!entries.has(fileName)) {
+      missingAccounts.push(account)
+      continue
+    }
+    results.push(await importCursorUsageCsv(join(directory, fileName), { account }))
+  }
+  return { directory, accounts: results, missingAccounts }
 }
 
 function localDateKey(timestamp: string): string {

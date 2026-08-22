@@ -48,7 +48,11 @@ describe('provider turn grouping', () => {
     const { isSqliteAvailable } = await import('../src/sqlite.js')
     if (!isSqliteAvailable()) return
 
-    const cursorDir = join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage')
+    const cursorDir = process.platform === 'darwin'
+      ? join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage')
+      : process.platform === 'win32'
+        ? join(home, 'AppData', 'Roaming', 'Cursor', 'User', 'globalStorage')
+        : join(home, '.config', 'Cursor', 'User', 'globalStorage')
     await mkdir(cursorDir, { recursive: true })
     const dbPath = join(cursorDir, 'state.vscdb')
     const requireForTest = createRequire(import.meta.url)

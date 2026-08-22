@@ -32,10 +32,28 @@ rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}"
 
 echo "▸ Building universal binary (arm64 + x86_64)..."
-swift build -c release --arch arm64 --arch x86_64
-
-BIN_PATH=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
-BUILT_BINARY="${BIN_PATH}/${EXECUTABLE_NAME}"
+if XCBUILD_PATH=$(xcrun --find xcbuild 2>/dev/null) && [[ -x "${XCBUILD_PATH}" ]]; then
+  swift build -c release --arch arm64 --arch x86_64
+  BIN_PATH=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
+  BUILT_BINARY="${BIN_PATH}/${EXECUTABLE_NAME}"
+else
+  # SwiftPM delegates a multi-arch build to xcbuild, which the standalone
+  # Command Line Tools do not include. Build both slices independently and
+  # merge them so local packaging remains equivalent to the CI artifact.
+  ARCH_BINARIES=()
+  for ARCH in arm64 x86_64; do
+    swift build -c release --arch "${ARCH}"
+    ARCH_BIN_PATH=$(swift build -c release --arch "${ARCH}" --show-bin-path)
+    ARCH_BINARY="${ARCH_BIN_PATH}/${EXECUTABLE_NAME}"
+    if [[ ! -x "${ARCH_BINARY}" ]]; then
+      echo "Binary not found at ${ARCH_BINARY}" >&2
+      exit 1
+    fi
+    ARCH_BINARIES+=("${ARCH_BINARY}")
+  done
+  BUILT_BINARY="${DIST_DIR}/${EXECUTABLE_NAME}-universal"
+  lipo -create -output "${BUILT_BINARY}" "${ARCH_BINARIES[@]}"
+fi
 if [[ ! -x "${BUILT_BINARY}" ]]; then
   echo "Binary not found at ${BUILT_BINARY}" >&2
   exit 1

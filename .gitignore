@@ -20,6 +20,7 @@ Thumbs.db
 docs/superpowers/
 .claude/
 /CLAUDE.md
+!/CLAUDE.md
 
 # Config / secrets
 .env
